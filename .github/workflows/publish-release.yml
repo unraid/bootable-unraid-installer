@@ -173,6 +173,17 @@ jobs:
           echo "Release assets ready:"
           ls -lh release-assets
 
+      - name: Compress IMG files for release
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Compressing install-user.img..."
+          zip -9 -j release-assets/install-user.img.zip release-assets/install-user.img
+          echo "Compressing install-user-minimal.img..."
+          zip -9 -j release-assets/install-user-minimal.img.zip release-assets/install-user-minimal.img
+          echo "Compressed sizes:"
+          ls -lh release-assets/*.zip
+
       - name: Create or update GitHub release
         uses: softprops/action-gh-release@v2
         with:
@@ -183,7 +194,7 @@ jobs:
           overwrite_files: true
           files: |
             release-assets/install-user.iso
-            release-assets/install-user.img
-            release-assets/install-user-minimal.img
+            release-assets/install-user.img.zip
+            release-assets/install-user-minimal.img.zip
             release-assets/checksums.sha256
           generate_release_notes: true
