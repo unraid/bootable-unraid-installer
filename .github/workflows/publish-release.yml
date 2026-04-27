@@ -4,8 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       source_run_id:
-        description: "GitHub Actions run ID from Build Install Images"
-        required: true
+        description: "GitHub Actions run ID from Build Install Images (default: latest)"
+        required: false
+        default: "latest"
         type: string
       release_tag:
         description: "Release tag to create/update (example: install-user-v2026.04.27)"
@@ -55,7 +56,29 @@ jobs:
             --json=number,createdAt,status,conclusion \
             --template='{{range .}}{{.number}} | {{.createdAt}} | {{.status}} | {{.conclusion}}{{"\n"}}{{end}}'
           echo ""
-          echo "Use the run number (first column) as source_run_id input above."
+          echo "Optionally override by setting source_run_id to a specific run number."
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Resolve source run ID
+        id: run-id
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_run_id="${{ inputs.source_run_id }}"
+          
+          if [[ "$source_run_id" == "latest" ]]; then
+            # Get the most recent completed run
+            source_run_id=$(gh run list \
+              --workflow=build-images.yml \
+              --status=completed \
+              --limit=1 \
+              --json=number \
+              --template='{{.number}}')
+            echo "Resolved 'latest' to run ID: $source_run_id"
+          fi
+          
+          echo "run_id=$source_run_id" >> "$GITHUB_OUTPUT"
         env:
           GH_TOKEN: ${{ github.token }}
 
@@ -79,7 +102,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           github-token: ${{ github.token }}
-          run-id: ${{ inputs.source_run_id }}
+          run-id: ${{ steps.run-id.outputs.run_id }}
           pattern: install-user-iso-*
           merge-multiple: true
           path: release-assets
@@ -88,7 +111,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           github-token: ${{ github.token }}
-          run-id: ${{ inputs.source_run_id }}
+          run-id: ${{ steps.run-id.outputs.run_id }}
           pattern: install-user-img-*
           merge-multiple: true
           path: release-assets
@@ -97,7 +120,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           github-token: ${{ github.token }}
-          run-id: ${{ inputs.source_run_id }}
+          run-id: ${{ steps.run-id.outputs.run_id }}
           pattern: install-user-minimal-img-*
           merge-multiple: true
           path: release-assets
@@ -106,7 +129,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           github-token: ${{ github.token }}
-          run-id: ${{ inputs.source_run_id }}
+          run-id: ${{ steps.run-id.outputs.run_id }}
           pattern: install-user-checksums-*
           merge-multiple: true
           path: release-assets
