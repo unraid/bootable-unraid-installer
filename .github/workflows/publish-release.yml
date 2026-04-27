@@ -74,7 +74,7 @@ jobs:
               --status=completed \
               --limit=1 \
               --json=number \
-              --template='{{.number}}')
+              --template='{{.[0].number}}')
             echo "Resolved 'latest' to run ID: $source_run_id"
           fi
           
