@@ -1,4 +1,4 @@
-name: Publish Minimal Install Release
+name: Publish Seeded Install Release
 
 on:
   workflow_dispatch:
@@ -9,7 +9,7 @@ on:
         default: "latest"
         type: string
       release_tag:
-        description: "Release tag to create/update (example: install-user-v2026.04.27)"
+        description: "Release tag to create/update (example: install-user-seeded-v2026.04.27)"
         required: true
         type: string
       release_name:
@@ -34,7 +34,7 @@ permissions:
 
 jobs:
   publish-release:
-    name: Publish minimal release assets
+    name: Publish seeded release assets
     runs-on: ubuntu-24.04
 
     steps:
@@ -68,7 +68,6 @@ jobs:
           source_run_id="${{ inputs.source_run_id }}"
 
           if [[ "$source_run_id" == "latest" ]]; then
-            # Resolve to the databaseId of the most recent completed run
             db_id=$(gh run list \
               --workflow=build-images.yml \
               --status=completed \
@@ -84,7 +83,6 @@ jobs:
             echo "Resolved 'latest' to run number $run_num (database ID: $db_id)"
             source_run_id="$db_id"
           else
-            # User supplied a run number — resolve it to the internal database ID
             db_id=$(gh run list \
               --workflow=build-images.yml \
               --limit=50 \
@@ -118,21 +116,12 @@ jobs:
           echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
           echo "release_name=$release_name" >> "$GITHUB_OUTPUT"
 
-      - name: Download ISO artifact from source run
+      - name: Download IMG artifact from source run
         uses: actions/download-artifact@v4
         with:
           github-token: ${{ github.token }}
           run-id: ${{ steps.run-id.outputs.run_id }}
-          pattern: install-user-iso-*
-          merge-multiple: true
-          path: release-assets
-
-      - name: Download minimal IMG artifact from source run
-        uses: actions/download-artifact@v4
-        with:
-          github-token: ${{ github.token }}
-          run-id: ${{ steps.run-id.outputs.run_id }}
-          pattern: install-user-minimal-img-*
+          pattern: install-user-img-*
           merge-multiple: true
           path: release-assets
 
@@ -142,8 +131,7 @@ jobs:
           set -euo pipefail
 
           required_files=(
-            release-assets/install-user.iso
-            release-assets/install-user-minimal.img
+            release-assets/install-user.img
           )
 
           for file in "${required_files[@]}"; do
@@ -153,21 +141,20 @@ jobs:
           echo "Release assets ready:"
           ls -lh release-assets
 
-      - name: Compress minimal IMG for release
+      - name: Compress seeded IMG for release
         shell: bash
         run: |
           set -euo pipefail
-          echo "Compressing install-user-minimal.img..."
-          zip -9 -j release-assets/install-user-minimal.img.zip release-assets/install-user-minimal.img
+          echo "Compressing install-user.img..."
+          zip -9 -j release-assets/install-user.img.zip release-assets/install-user.img
           echo "Compressed sizes:"
-          ls -lh release-assets/install-user-minimal.img.zip
+          ls -lh release-assets/install-user.img.zip
 
       - name: Generate per-file MD5 checksums
         shell: bash
         run: |
           set -euo pipefail
-          md5sum release-assets/install-user.iso | awk '{print $1}' > release-assets/install-user.iso.md5
-          md5sum release-assets/install-user-minimal.img.zip | awk '{print $1}' > release-assets/install-user-minimal.img.zip.md5
+          md5sum release-assets/install-user.img.zip | awk '{print $1}' > release-assets/install-user.img.zip.md5
           ls -lh release-assets/*.md5
 
       - name: Create or update GitHub release
@@ -179,9 +166,6 @@ jobs:
           prerelease: ${{ inputs.prerelease }}
           overwrite_files: true
           files: |
-            release-assets/install-user.iso
-            release-assets/install-user-minimal.img.zip
-            release-assets/install-user.iso.md5
-            release-assets/install-user-minimal.img.zip.md5
+            release-assets/install-user.img.zip
+            release-assets/install-user.img.zip.md5
           generate_release_notes: true
-
