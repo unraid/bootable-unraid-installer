@@ -1,0 +1,108 @@
+name: Prime Install Kernel and ZFS Cache
+
+on:
+  workflow_dispatch:
+    inputs:
+      clean_build:
+        description: "Force clean kernel/ZFS rebuild"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  prime-cache:
+    name: Build and cache kernel/ZFS artifacts
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: install-cache-${{ github.ref_name }}
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+
+      - name: Restore build cache (kernel/ZFS/rootfs)
+        id: restore-build-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: zfs-live-build
+          key: install-build-v3-${{ runner.os }}-${{ hashFiles('build/version-lock.json') }}-run-${{ github.run_id }}
+          restore-keys: |
+            install-build-v3-${{ runner.os }}-${{ hashFiles('build/version-lock.json') }}-
+
+      - name: Cache diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "cache-hit=${{ steps.restore-build-cache.outputs.cache-hit }}"
+          if [[ -d zfs-live-build ]]; then
+            echo "Existing kernel/zfs stamp files after restore:"
+            find zfs-live-build -maxdepth 1 -type f -name '.*-build-*.stamp' -print | sort || true
+          else
+            echo "No zfs-live-build directory restored."
+          fi
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./scripts/install-deps.sh
+          sudo ./scripts/install-deps.sh
+
+      - name: Prime kernel and OpenZFS cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./scripts/build-kernel-zfs-cache.sh
+
+          args=()
+          if [[ "${{ inputs.clean_build }}" == "true" ]]; then
+            args+=(--clean)
+          fi
+
+          ./scripts/build-kernel-zfs-cache.sh "${args[@]}"
+
+      - name: Show cache artifacts
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Cache directory snapshot:"
+          find zfs-live-build -maxdepth 2 -type f | sort
+
+      - name: Validate cache completeness
+        if: always()
+        id: cache-complete
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          kernel_stamp_count=0
+          zfs_stamp_count=0
+          if [[ -d zfs-live-build ]]; then
+            kernel_stamp_count="$(find zfs-live-build -maxdepth 1 -type f -name '.*kernel-build-*.stamp' | wc -l | tr -d '[:space:]')"
+            zfs_stamp_count="$(find zfs-live-build -maxdepth 1 -type f -name '.*zfs-build-*.stamp' | wc -l | tr -d '[:space:]')"
+          fi
+
+          echo "kernel_stamp_count=$kernel_stamp_count"
+          echo "zfs_stamp_count=$zfs_stamp_count"
+
+          if [[ "$kernel_stamp_count" != "0" && "$zfs_stamp_count" != "0" ]]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping cache save because cache content is incomplete (missing kernel or zfs build stamp)."
+          fi
+
+      - name: Save build cache (kernel/ZFS/rootfs)
+        if: ${{ always() && steps.cache-complete.outputs.ready == 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: zfs-live-build
+          key: install-build-v3-${{ runner.os }}-${{ hashFiles('build/version-lock.json') }}-run-${{ github.run_id }}

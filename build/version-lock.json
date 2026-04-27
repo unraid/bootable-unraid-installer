@@ -1,0 +1,5 @@
+{
+  "kernel_series": "6.18",
+  "kernel_version": "6.18.23",
+  "zfs_tag": "2.4.1"
+}

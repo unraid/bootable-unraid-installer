@@ -1,0 +1,321 @@
+name: Build Install Images
+
+on:
+  workflow_dispatch:
+    inputs:
+      persist_fs:
+        description: "Default persistence filesystem"
+        required: true
+        default: "vfat"
+        type: choice
+        options:
+          - ext4
+          - fat32
+          - vfat
+      menu_backend:
+        description: "Default menu backend"
+        required: true
+        default: "auto"
+        type: choice
+        options:
+          - auto
+          - whiptail
+          - dialog
+          - text
+      clean_build:
+        description: "Clean kernel/ZFS rebuild (full mode only)"
+        required: true
+        default: false
+        type: boolean
+      force:
+        description: "Overwrite existing output files"
+        required: true
+        default: true
+        type: boolean
+      publish:
+        description: "Publish built outputs to PUBLISH_DIR"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  build-images:
+    name: Build install images
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: install-images-${{ github.ref_name }}-user
+      cancel-in-progress: false
+    env:
+      PUBLISH_DIR: ${{ github.workspace }}/artifacts/published
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 1
+
+      - name: Show workflow ref and script version
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "github.ref=${{ github.ref }}"
+          echo "github.sha=${{ github.sha }}"
+          echo "event_name=${{ github.event_name }}"
+          git rev-parse --abbrev-ref HEAD
+          git rev-parse HEAD
+          echo "---- scripts/build-install-images.sh (first 40 lines) ----"
+          sed -n '1,40p' ./scripts/build-install-images.sh
+
+      - name: Restore build cache (kernel/ZFS/rootfs)
+        id: restore-build-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: zfs-live-build
+          key: install-build-v3-${{ runner.os }}-${{ hashFiles('build/version-lock.json') }}-run-${{ github.run_id }}
+          restore-keys: |
+            install-build-v3-${{ runner.os }}-${{ hashFiles('build/version-lock.json') }}-
+
+      - name: Cache diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "cache-hit=${{ steps.restore-build-cache.outputs.cache-hit }}"
+          if [[ -d zfs-live-build ]]; then
+            echo "Existing kernel/zfs stamp files after restore:"
+            find zfs-live-build -maxdepth 1 -type f -name '.*-build-*.stamp' -print | sort || true
+          else
+            echo "No zfs-live-build directory restored."
+          fi
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./scripts/install-deps.sh
+          sudo ./scripts/install-deps.sh
+
+      - name: Prepare workspace seed and publish paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ./artifacts/published
+          [[ -d ./persistent ]] || { echo "Missing seed directory: ./persistent" >&2; exit 1; }
+
+      - name: Preflight required user build files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          required_scripts=(
+            ./scripts/build-install-images.sh
+            ./scripts/build-kernel-zfs-cache.sh
+            ./scripts/build-iso.sh
+            ./scripts/build-usb-native.sh
+            ./scripts/menu_gui_user.sh
+            ./scripts/create_internal_boot_user.sh
+          )
+
+          for script in "${required_scripts[@]}"; do
+            [[ -f "$script" ]] || { echo "Missing required file: $script" >&2; exit 1; }
+            [[ -x "$script" ]] || chmod +x "$script"
+          done
+
+      - name: Build images
+        shell: bash
+        env:
+          PUBLISH_ENABLED: ${{ inputs.publish && '1' || '0' }}
+          SEED_DIR: ${{ github.workspace }}/persistent
+          VERSION_LOCK_FILE: ${{ github.workspace }}/build/version-lock.json
+        run: |
+          set -euo pipefail
+
+          args=(--mode "full" --persist-fs "${{ inputs.persist_fs }}" --menu-backend "${{ inputs.menu_backend }}")
+
+          if [[ "${{ inputs.clean_build }}" == "true" ]]; then
+            args+=(--clean-build)
+          fi
+
+          if [[ "${{ inputs.force }}" == "true" ]]; then
+            args+=(--force)
+          fi
+
+          ./scripts/build-install-images.sh "${args[@]}"
+
+      - name: Validate user ISO and IMG outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          required_outputs=(
+            zfs-live-build/install-user.iso
+            zfs-live-build/install-user.img
+          )
+
+          for output in "${required_outputs[@]}"; do
+            [[ -f "$output" ]] || { echo "Missing required user artifact: $output" >&2; exit 1; }
+          done
+
+      - name: Collect build outputs
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          if [[ -d zfs-live-build ]]; then
+            find zfs-live-build -maxdepth 1 -type f \( -name "install-*.iso" -o -name "install-*.img" \) -exec cp -v {} artifacts/ \;
+          fi
+
+      - name: Smoke check artifacts and generate checksums
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          artifacts_to_check=(artifacts/install-*.iso artifacts/install-*.img)
+          [[ ${#artifacts_to_check[@]} -gt 0 ]] || {
+            echo "No install artifacts found for smoke checks" >&2
+            exit 1
+          }
+
+          : > artifacts/checksums.sha256
+
+          for artifact in "${artifacts_to_check[@]}"; do
+            [[ -s "$artifact" ]] || { echo "Artifact is empty: $artifact" >&2; exit 1; }
+
+            mime_type="$(file --brief --mime-type "$artifact")"
+            case "$artifact" in
+              *.iso)
+                [[ "$mime_type" == "application/x-iso9660-image" || "$mime_type" == "application/octet-stream" ]] || {
+                  echo "Unexpected ISO mime type for $artifact: $mime_type" >&2
+                  exit 1
+                }
+                min_size_bytes=67108864
+                ;;
+              *-minimal.img)
+                [[ "$mime_type" == "application/octet-stream" || "$mime_type" == "application/x-iso9660-image" ]] || {
+                  echo "Unexpected IMG mime type for $artifact: $mime_type" >&2
+                  exit 1
+                }
+                min_size_bytes=33554432
+                ;;
+              *.img)
+                [[ "$mime_type" == "application/octet-stream" || "$mime_type" == "application/x-iso9660-image" ]] || {
+                  echo "Unexpected IMG mime type for $artifact: $mime_type" >&2
+                  exit 1
+                }
+                min_size_bytes=67108864
+                ;;
+            esac
+
+            size_bytes="$(stat -c%s "$artifact")"
+            (( size_bytes >= min_size_bytes )) || {
+              echo "Artifact too small: $artifact (${size_bytes} bytes, expected >= ${min_size_bytes})" >&2
+              exit 1
+            }
+
+            sha256sum "$artifact" >> artifacts/checksums.sha256
+          done
+
+      - name: Commit published outputs to repository
+        if: ${{ success() && inputs.publish }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! compgen -G "artifacts/published/*" > /dev/null; then
+            echo "No files found under artifacts/published; skipping commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add artifacts/published
+
+          if git diff --cached --quiet; then
+            echo "No published output changes to commit."
+            exit 0
+          fi
+
+          git commit -m "ci: publish install-user outputs (run ${{ github.run_number }})"
+          git push origin "HEAD:${{ github.ref_name }}"
+
+      - name: Upload user ISO
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-user-iso-${{ github.run_number }}
+          retention-days: 14
+          path: artifacts/install-user.iso
+          if-no-files-found: warn
+
+      - name: Upload user IMG
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-user-img-${{ github.run_number }}
+          retention-days: 14
+          path: artifacts/install-user.img
+          if-no-files-found: warn
+
+      - name: Upload user minimal IMG
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-user-minimal-img-${{ github.run_number }}
+          retention-days: 14
+          path: artifacts/install-user-minimal.img
+          if-no-files-found: warn
+
+      - name: Upload user checksums
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-user-checksums-${{ github.run_number }}
+          retention-days: 14
+          path: artifacts/checksums.sha256
+          if-no-files-found: warn
+
+      - name: Upload user published outputs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-user-published-${{ github.run_number }}
+          retention-days: 14
+          path: artifacts/published/*
+          if-no-files-found: warn
+
+      - name: Validate cache completeness
+        if: always()
+        id: cache-complete
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          kernel_stamp_count=0
+          zfs_stamp_count=0
+          if [[ -d zfs-live-build ]]; then
+            kernel_stamp_count="$(find zfs-live-build -maxdepth 1 -type f -name '.*kernel-build-*.stamp' | wc -l | tr -d '[:space:]')"
+            zfs_stamp_count="$(find zfs-live-build -maxdepth 1 -type f -name '.*zfs-build-*.stamp' | wc -l | tr -d '[:space:]')"
+          fi
+
+          echo "kernel_stamp_count=$kernel_stamp_count"
+          echo "zfs_stamp_count=$zfs_stamp_count"
+
+          if [[ "$kernel_stamp_count" != "0" && "$zfs_stamp_count" != "0" ]]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping cache save because cache content is incomplete (missing kernel or zfs build stamp)."
+          fi
+
+      - name: Save build cache (kernel/ZFS/rootfs)
+        if: ${{ always() && steps.cache-complete.outputs.ready == 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: zfs-live-build
+          key: install-build-v3-${{ runner.os }}-${{ hashFiles('build/version-lock.json') }}-run-${{ github.run_id }}
