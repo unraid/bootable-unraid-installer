@@ -66,18 +66,38 @@ jobs:
         run: |
           set -euo pipefail
           source_run_id="${{ inputs.source_run_id }}"
-          
+
           if [[ "$source_run_id" == "latest" ]]; then
-            # Get the most recent completed run
-            source_run_id=$(gh run list \
+            # Resolve to the databaseId of the most recent completed run
+            db_id=$(gh run list \
               --workflow=build-images.yml \
               --status=completed \
               --limit=1 \
-              --json=number \
+              --json=databaseId,number \
+              --jq='.[0].databaseId')
+            run_num=$(gh run list \
+              --workflow=build-images.yml \
+              --status=completed \
+              --limit=1 \
+              --json=databaseId,number \
               --jq='.[0].number')
-            echo "Resolved 'latest' to run ID: $source_run_id"
+            echo "Resolved 'latest' to run number $run_num (database ID: $db_id)"
+            source_run_id="$db_id"
+          else
+            # User supplied a run number — resolve it to the internal database ID
+            db_id=$(gh run list \
+              --workflow=build-images.yml \
+              --limit=50 \
+              --json=databaseId,number \
+              --jq="map(select(.number == ($source_run_id | tonumber))) | .[0].databaseId")
+            [[ -n "$db_id" && "$db_id" != "null" ]] || {
+              echo "Could not resolve run number $source_run_id to a database ID" >&2
+              exit 1
+            }
+            echo "Resolved run number $source_run_id to database ID: $db_id"
+            source_run_id="$db_id"
           fi
-          
+
           echo "run_id=$source_run_id" >> "$GITHUB_OUTPUT"
         env:
           GH_TOKEN: ${{ github.token }}
