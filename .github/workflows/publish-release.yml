@@ -37,6 +37,28 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: List recent Build Install Images runs
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "=== Recent completed Build Install Images runs ==="
+          echo ""
+          gh run list \
+            --workflow=build-images.yml \
+            --status=completed \
+            --limit=10 \
+            --json=number,createdAt,status,conclusion \
+            --template='{{range .}}{{.number}} | {{.createdAt}} | {{.status}} | {{.conclusion}}{{"\n"}}{{end}}'
+          echo ""
+          echo "Use the run number (first column) as source_run_id input above."
+        env:
+          GH_TOKEN: ${{ github.token }}
+
       - name: Resolve release metadata
         id: meta
         shell: bash
