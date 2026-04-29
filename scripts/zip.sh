@@ -449,7 +449,7 @@ download_file() {
 
   local tmp_out="${out}.part"
   local start_ts elapsed size rate spinner_index spinner_char
-  local spinner='|/-\\'
+  local spinner="|/-\\"
   local gui_status_shown=0
 
   rm -f "$tmp_out"
@@ -647,6 +647,8 @@ if ! command -v php >/dev/null 2>&1; then
 fi
 
 RELEASES_FILE="$(mktemp)"
+# The PHP parser is intentionally single-quoted so the shell does not expand PHP variables.
+# shellcheck disable=SC2016
 php -r '
   $json = json_decode(file_get_contents($argv[1]), true);
   if (!is_array($json)) {

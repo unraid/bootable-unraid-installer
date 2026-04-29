@@ -377,7 +377,7 @@ if [[ "${PERSIST_READY:-0}" != "1" ]]; then
 fi
 
 if compgen -G "${ZIP_DIR}/unRAIDServer-*-x86_64.zip" > /dev/null; then
-    ZIP_FILE="$(ls -1 "${ZIP_DIR}"/unRAIDServer-*-x86_64.zip | sort -V | tail -n1)"
+    ZIP_FILE="$(find "$ZIP_DIR" -maxdepth 1 -type f -name 'unRAIDServer-*-x86_64.zip' -print | sort -V | tail -n1)"
 else
     error_msg "ERROR: no unRAIDServer zip files found in ${ZIP_DIR}"
     exit 1
