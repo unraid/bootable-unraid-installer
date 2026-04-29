@@ -37,6 +37,12 @@ From the repository root:
 
 Primary outputs are typically written under `zfs-live-build/`.
 
+## License and Security
+
+This repository is licensed under the MIT License. See `LICENSE`.
+
+Please report suspected vulnerabilities privately. See `SECURITY.md`.
+
 ## Notes
 
 - Script behavior and options can evolve. Use `docs/USER_COMMANDS.md` as the primary reference for current command usage.
