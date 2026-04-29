@@ -54,7 +54,8 @@ Persistence `runtime/` is an intentional trusted extension point for partner
 and support workflows. Files placed under `/mnt/persist/runtime` can replace
 installer runtime scripts such as `menu.sh`, `create_flash_boot.sh`, and
 `zip.sh`; replacement scripts are made executable and run as root during the
-installer flow.
+installer flow. See [USER_COMMANDS.md](USER_COMMANDS.md#persistence-runtime-overrides)
+for the full list of supported override names.
 
 Treat this directory as trusted code, not as general user data. Anyone who can
 write to persistence can change future installer behavior. Partner-prepared

@@ -128,7 +128,7 @@ Notes:
 
 - The `build-usb-native.sh` usage above shows common options only; run `./scripts/build-usb-native.sh --help` for the full list, including partition sizing flags, `--persist-mib`, `--persist-autoexpand`, and `--tmp-dir`.
 - User build chain seeding copies only top-level `zips/` and `logs/` from the seed source.
-- Runtime overrides are applied at boot from `/mnt/persist/runtime`; this path is trusted executable extension space for partner and support workflows.
+- Runtime overrides are applied at boot from `/mnt/persist/runtime`; this path is trusted executable extension space for partner and support workflows. See [Persistence Runtime Overrides](#persistence-runtime-overrides).
 
 ## USB and Packaging Helpers
 
@@ -189,6 +189,9 @@ At runtime, `/boot/install/menu.sh` is launched after persistence runtime overri
 runtime names are present there, the boot flow copies them over the matching
 installer scripts in `/boot/install` before launching the menu. Script
 overrides are made executable and run as root.
+
+Maintenance note: keep this list synchronized with the hardcoded whitelist in
+`build-iso.sh` when adding or removing override names.
 
 Supported override names currently include:
 
