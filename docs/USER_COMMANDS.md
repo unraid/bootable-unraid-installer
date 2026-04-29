@@ -50,7 +50,7 @@ Purpose:
 Usage:
 
 ```bash
-./scripts/build-install-images.sh [--user] [--mode full|grub-iso] [--menu-ui gui] [--persist-fs ext4|fat32|vfat] [--size SIZE] [--clean-build] [--force]
+./scripts/build-install-images.sh [--user] [--mode full|grub-iso] [--menu-ui gui] [--menu-backend auto|whiptail|dialog|text] [--persist-fs ext4|fat32|vfat] [--size SIZE] [--clean-build] [--force]
 ```
 
 Options:
@@ -58,6 +58,7 @@ Options:
 - `--user`: accepted alias for user-only flow
 - `--mode MODE`: first run mode, `full` or `grub-iso` (default `full`)
 - `--menu-ui UI`: default menu implementation, `gui` only
+- `--menu-backend BACKEND`: default menu backend for `build-install-images.sh`, `auto|whiptail|dialog|text`
 - `--persist-fs FS`: default persistence filesystem for boot auto-create (`ext4|fat32|vfat`)
 - `--size SIZE`: image size passed to `build-usb-native.sh` (default `auto`)
 - `--clean-build`: force clean kernel/ZFS rebuild (requires `--mode full`)
@@ -125,6 +126,7 @@ Usage:
 
 Notes:
 
+- The `build-usb-native.sh` usage above shows common options only; run `./scripts/build-usb-native.sh --help` for the full list, including partition sizing flags, `--persist-mib`, `--persist-autoexpand`, and `--tmp-dir`.
 - User build chain seeding copies only top-level `zips/` and `logs/` from the seed source.
 - Runtime overrides are applied at boot from `/mnt/persist/runtime`.
 
@@ -163,8 +165,15 @@ Purpose:
 Usage:
 
 ```bash
-./scripts/zip.sh [--zip-dir PATH]
+./scripts/zip.sh [--zip-dir PATH] [--ui text|gui] [--latest] [--non-interactive]
 ```
+
+Notes:
+
+- `--zip-dir PATH` stores downloaded ZIP files in a specific directory.
+- `--ui text|gui` selects the prompt mode.
+- `--latest` downloads the latest supported release and exits.
+- `--non-interactive` disables prompts for automation and CI; it requires `--latest`.
 
 ## Runtime Menu Scripts
 
