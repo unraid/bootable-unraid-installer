@@ -7,7 +7,7 @@ This guide lists the current user build chain commands.
 Build user artifacts and overwrite previous outputs:
 
 ```bash
-./build-install-images.sh --mode full --force
+./scripts/build-install-images.sh --mode full --force
 ```
 
 Artifacts are produced in `zfs-live-build/` and copied to `artifacts/published/` when publish is enabled.
@@ -50,7 +50,7 @@ Purpose:
 Usage:
 
 ```bash
-./build-install-images.sh [--user] [--mode full|grub-iso] [--menu-ui gui] [--persist-fs ext4|fat32|vfat] [--size SIZE] [--clean-build] [--force]
+./scripts/build-install-images.sh [--user] [--mode full|grub-iso] [--menu-ui gui] [--menu-backend auto|whiptail|dialog|text] [--persist-fs ext4|fat32|vfat] [--size SIZE] [--clean-build] [--force]
 ```
 
 Options:
@@ -58,6 +58,7 @@ Options:
 - `--user`: accepted alias for user-only flow
 - `--mode MODE`: first run mode, `full` or `grub-iso` (default `full`)
 - `--menu-ui UI`: default menu implementation, `gui` only
+- `--menu-backend BACKEND`: default menu backend for `build-install-images.sh`, `auto|whiptail|dialog|text`
 - `--persist-fs FS`: default persistence filesystem for boot auto-create (`ext4|fat32|vfat`)
 - `--size SIZE`: image size passed to `build-usb-native.sh` (default `auto`)
 - `--clean-build`: force clean kernel/ZFS rebuild (requires `--mode full`)
@@ -107,8 +108,8 @@ Key environment variables:
 Examples:
 
 ```bash
-PUBLISH_ISO=./zfs-live-build/install-user.iso ./build-iso.sh full --menu-ui gui
-PUBLISH_ISO=./zfs-live-build/install-user.iso ./build-iso.sh grub-iso --menu-ui gui
+PUBLISH_ISO=./zfs-live-build/install-user.iso ./scripts/build-iso.sh full --menu-ui gui
+PUBLISH_ISO=./zfs-live-build/install-user.iso ./scripts/build-iso.sh grub-iso --menu-ui gui
 ```
 
 ### `build-usb-native.sh`
@@ -120,11 +121,12 @@ Purpose:
 Usage:
 
 ```bash
-./build-usb-native.sh [--iso PATH] [--output PATH] [--size SIZE|auto] [--persist-fs ext4|exfat|fat32|vfat] [--seed-dir PATH] [--no-persist] [--force]
+./scripts/build-usb-native.sh [--iso PATH] [--output PATH] [--size SIZE|auto] [--persist-fs ext4|exfat|fat32|vfat] [--seed-dir PATH] [--no-persist] [--force]
 ```
 
 Notes:
 
+- The `build-usb-native.sh` usage above shows common options only; run `./scripts/build-usb-native.sh --help` for the full list, including partition sizing flags, `--persist-mib`, `--persist-autoexpand`, and `--tmp-dir`.
 - User build chain seeding copies only top-level `zips/` and `logs/` from the seed source.
 - Runtime overrides are applied at boot from `/mnt/persist/runtime`.
 
@@ -154,26 +156,6 @@ Windows:
 - Select `install-user.img` (preferred) or `install-user.iso`.
 - If writing ISO with Rufus, use DD Image mode when prompted.
 
-### `write-usb.sh`
-
-Purpose:
-
-- Write ISO to a physical USB disk and create/configure persistence partition.
-
-Usage:
-
-```bash
-./write-usb.sh <device> [iso_path] [zip_path]
-```
-
-Examples:
-
-```bash
-./write-usb.sh sdb
-./write-usb.sh /dev/sdb ./zfs-live-build/install-user.iso
-./write-usb.sh /dev/sdb ./zfs-live-build/install-user.iso /path/to/unRAIDServer-7.2.4-x86_64.zip
-```
-
 ### `zip.sh`
 
 Purpose:
@@ -183,8 +165,15 @@ Purpose:
 Usage:
 
 ```bash
-./zip.sh [--zip-dir PATH]
+./scripts/zip.sh [--zip-dir PATH] [--ui text|gui] [--latest] [--non-interactive]
 ```
+
+Notes:
+
+- `--zip-dir PATH` stores downloaded ZIP files in a specific directory.
+- `--ui text|gui` selects the prompt mode.
+- `--latest` downloads the latest supported release and exits.
+- `--non-interactive` disables prompts for automation and CI; it requires `--latest`.
 
 ## Runtime Menu Scripts
 
@@ -200,12 +189,12 @@ At runtime, `/boot/install/menu.sh` is launched after persistence runtime overri
 
 ```bash
 rm -f zfs-live-build/.kernel-build-*.stamp zfs-live-build/.zfs-build-*.stamp
-./build-install-images.sh --mode full --force
+./scripts/build-install-images.sh --mode full --force
 ```
 
 1. Full clean rebuild:
 
 ```bash
 rm -rf zfs-live-build
-./build-install-images.sh --mode full --force
+./scripts/build-install-images.sh --mode full --force
 ```

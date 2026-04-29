@@ -1,0 +1,24 @@
+# Build outputs
+/zfs-live-build/
+/artifacts/
+/persistent/zips/
+/persistent/zip/
+/persistent/logs/
+*.iso
+*.img
+*.img.zip
+*.sha256
+*.md5
+
+# Local build scratch paths
+.tmp-build-usb-native/
+*.part
+*.log
+
+# OS and editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo

@@ -37,6 +37,13 @@ From the repository root:
 
 Primary outputs are typically written under `zfs-live-build/`.
 
+## License and Security
+
+This repository is licensed under GPL-2.0-or-later. See `LICENSE`.
+
+Please report suspected vulnerabilities through the Unraid organization
+security policy: <https://github.com/unraid/.github/security/policy>.
+
 ## Notes
 
 - Script behavior and options can evolve. Use `docs/USER_COMMANDS.md` as the primary reference for current command usage.
