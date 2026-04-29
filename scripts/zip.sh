@@ -501,6 +501,114 @@ download_file() {
   mv -f "$tmp_out" "$out"
 }
 
+release_zip_url_without_query() {
+  local url="$1"
+  printf '%s\n' "${url%%\?*}"
+}
+
+release_zip_filename() {
+  local url="$1"
+  local clean_url
+  clean_url="$(release_zip_url_without_query "$url")"
+  basename "$clean_url"
+}
+
+validate_release_zip_url() {
+  local url="$1"
+  local clean_url filename
+
+  clean_url="$(release_zip_url_without_query "$url")"
+  filename="$(basename "$clean_url")"
+
+  if [[ "$url" == *"#"* ]]; then
+    echo "Error: release URL contains a fragment, which is not allowed: ${url}"
+    exit 1
+  fi
+
+  if [[ "$clean_url" != https://releases.unraid.net/dl/* ]]; then
+    echo "Error: release URL must use https://releases.unraid.net/dl/: ${url}"
+    exit 1
+  fi
+
+  if [[ "$clean_url" == *"/../"* || "$clean_url" == *"/./"* ]]; then
+    echo "Error: release URL path contains unsupported relative path segments: ${url}"
+    exit 1
+  fi
+
+  if [[ ! "$filename" =~ ^unRAIDServer-[A-Za-z0-9._-]+-x86_64\.zip$ ]]; then
+    echo "Error: release URL does not reference a supported Unraid ZIP filename: ${url}"
+    exit 1
+  fi
+}
+
+release_md5_url_for_zip() {
+  local url="$1"
+  local clean_url
+
+  clean_url="$(release_zip_url_without_query "$url")"
+  printf '%s\n' "${clean_url%.zip}.md5"
+}
+
+file_md5() {
+  local file="$1"
+
+  if command -v md5sum >/dev/null 2>&1; then
+    md5sum "$file" | awk '{print tolower($1)}'
+    return
+  fi
+
+  if command -v md5 >/dev/null 2>&1; then
+    md5 -q "$file" | awk '{print tolower($1)}'
+    return
+  fi
+
+  echo "Error: md5sum or md5 is required to verify Unraid ZIP downloads."
+  exit 1
+}
+
+download_verified_release_zip() {
+  local url="$1"
+  local out="$2"
+  local clean_url md5_url tmp_zip tmp_md5 dest_md5 expected_md5 actual_md5
+
+  validate_release_zip_url "$url"
+
+  clean_url="$(release_zip_url_without_query "$url")"
+  md5_url="$(release_md5_url_for_zip "$url")"
+  tmp_zip="${out}.part"
+  tmp_md5="${out}.md5.part"
+  dest_md5="${out%.zip}.md5"
+
+  rm -f "$tmp_zip" "$tmp_md5"
+
+  download_file "$url" "$tmp_zip" yes
+
+  if ! download_file "$md5_url" "$tmp_md5"; then
+    rm -f "$tmp_zip" "$tmp_md5"
+    echo "Error: failed to download checksum file for $(basename "$clean_url"): ${md5_url}"
+    exit 1
+  fi
+
+  expected_md5="$(awk 'NR == 1 { print tolower($1); exit }' "$tmp_md5")"
+  if [[ ! "$expected_md5" =~ ^[0-9a-f]{32}$ ]]; then
+    rm -f "$tmp_zip" "$tmp_md5"
+    echo "Error: checksum file did not contain a valid MD5 digest: ${md5_url}"
+    exit 1
+  fi
+
+  actual_md5="$(file_md5 "$tmp_zip")"
+  if [[ "$actual_md5" != "$expected_md5" ]]; then
+    rm -f "$tmp_zip" "$tmp_md5"
+    echo "Error: integrity verification failed for $(basename "$clean_url")."
+    echo "Expected MD5 from ${md5_url}: ${expected_md5}"
+    echo "Actual MD5: ${actual_md5}"
+    exit 1
+  fi
+
+  mv -f "$tmp_zip" "$out"
+  mv -f "$tmp_md5" "$dest_md5"
+}
+
 flush_writeback_progress() {
   local start_ts elapsed dirty_kb writeback_kb
   local max_wait_s settle_kb stable_polls stable_count timed_out
@@ -691,7 +799,9 @@ if [[ -z "$selected_url" ]]; then
   exit 1
 fi
 
-filename="$(basename "${selected_url%%\?*}")"
+validate_release_zip_url "$selected_url"
+
+filename="$(release_zip_filename "$selected_url")"
 dest_file="${ZIP_DIR}/${filename}"
 
 if [ -e "$dest_file" ]; then
@@ -706,7 +816,7 @@ if [ -e "$dest_file" ]; then
 fi
 
 echo "Downloading ${selected_name}..."
-download_file "$selected_url" "$dest_file" yes
+download_verified_release_zip "$selected_url" "$dest_file"
 
 flush_writeback_progress
 echo "Saved to: ${dest_file}"
