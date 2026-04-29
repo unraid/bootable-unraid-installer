@@ -363,6 +363,10 @@ ui_view_log() {
 RUN_LOG_FILE=""
 STEP_COUNT=0
 TOTAL_STEPS=9
+AUDIT_STARTED=0
+AUDIT_WRITTEN=0
+AUDIT_STATUS="started"
+AUDIT_ERROR=""
 
 init_run_log() {
     RUN_LOG_FILE="$(mktemp /tmp/create-internal-boot-user.XXXXXX.log)"
@@ -373,6 +377,13 @@ show_failure_log_on_exit() {
 
     if (( rc == 0 )); then
         return
+    fi
+
+    if (( AUDIT_STARTED == 1 && AUDIT_WRITTEN == 0 )); then
+        AUDIT_STATUS="failure"
+        [[ -n "$AUDIT_ERROR" ]] || AUDIT_ERROR="create_internal_boot_user.sh exited with status $rc"
+        write_internal_boot_audit_record "$AUDIT_STATUS" "$AUDIT_ERROR" || true
+        AUDIT_WRITTEN=1
     fi
 
     if [[ -z "${RUN_LOG_FILE:-}" || ! -f "$RUN_LOG_FILE" ]]; then
@@ -417,6 +428,10 @@ log_msg() {
 
 error_msg() {
     local message="$*"
+    if (( AUDIT_STARTED == 1 )); then
+        AUDIT_STATUS="failure"
+        AUDIT_ERROR="$message"
+    fi
     if [[ "$ui_backend" != "text" ]]; then
         append_run_log "$message"
         ui_msg "Internal Boot Error" "$message"
@@ -445,6 +460,198 @@ step_update() {
 
     echo
     echo "==> [${STEP_COUNT}/${TOTAL_STEPS}] ${step_text}"
+}
+
+audit_json_escape() {
+    local value="${1:-}"
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
+    value="${value//$'\n'/\\n}"
+    value="${value//$'\r'/\\r}"
+    value="${value//$'\t'/\\t}"
+    printf '%s' "$value"
+}
+
+audit_json_string() {
+    printf '"%s"' "$(audit_json_escape "${1:-}")"
+}
+
+audit_file_sha256() {
+    local path="$1"
+    local digest=""
+
+    if [[ -f "$path" ]] && command -v sha256sum >/dev/null 2>&1; then
+        digest="$(sha256sum "$path" 2>/dev/null | awk '{print $1}' || true)"
+    fi
+
+    printf '%s' "${digest:-unavailable}"
+}
+
+audit_disk_value() {
+    local disk="$1" field="$2"
+    lsblk -dn -o "$field" "$disk" 2>/dev/null | head -n1 | sed 's/[[:space:]]*$//' || true
+}
+
+audit_blkid_value() {
+    local device="$1" field="$2"
+    if command -v blkid >/dev/null 2>&1; then
+        blkid -s "$field" -o value "$device" 2>/dev/null | head -n1 || true
+    fi
+}
+
+audit_write_disk_object() {
+    local out="$1" disk="$2" indent="$3" disk_id="${4:-}"
+    local size_bytes model serial tran wwn part_uuid part_label part_uuid_attr
+
+    size_bytes="$(blockdev --getsize64 "$disk" 2>/dev/null || true)"
+    model="$(audit_disk_value "$disk" MODEL)"
+    serial="$(audit_disk_value "$disk" SERIAL)"
+    tran="$(audit_disk_value "$disk" TRAN)"
+    wwn="$(audit_disk_value "$disk" WWN)"
+
+    {
+        printf '%s{\n' "$indent"
+        printf '%s  "path": %s,\n' "$indent" "$(audit_json_string "$disk")"
+        printf '%s  "disk_id": %s,\n' "$indent" "$(audit_json_string "$disk_id")"
+        printf '%s  "size_bytes": %s,\n' "$indent" "$(audit_json_string "$size_bytes")"
+        printf '%s  "model": %s,\n' "$indent" "$(audit_json_string "$model")"
+        printf '%s  "serial": %s,\n' "$indent" "$(audit_json_string "$serial")"
+        printf '%s  "transport": %s,\n' "$indent" "$(audit_json_string "$tran")"
+        printf '%s  "wwn": %s' "$indent" "$(audit_json_string "$wwn")"
+
+        if [[ -n "${5:-}" ]]; then
+            part_label="$(audit_blkid_value "$5" LABEL)"
+            part_uuid="$(audit_blkid_value "$5" UUID)"
+            part_uuid_attr="$(audit_blkid_value "$5" PARTUUID)"
+            printf ',\n%s  "boot_partition": {\n' "$indent"
+            printf '%s    "path": %s,\n' "$indent" "$(audit_json_string "$5")"
+            printf '%s    "label": %s,\n' "$indent" "$(audit_json_string "$part_label")"
+            printf '%s    "uuid": %s,\n' "$indent" "$(audit_json_string "$part_uuid")"
+            printf '%s    "partuuid": %s\n' "$indent" "$(audit_json_string "$part_uuid_attr")"
+            printf '%s  }\n' "$indent"
+        else
+            printf '\n'
+        fi
+        printf '%s}' "$indent"
+    } >> "$out"
+}
+
+audit_write_runtime_overrides() {
+    local out="$1" indent="$2"
+    local override_root="${PERSISTENT_ROOT:-/mnt/persist}/runtime"
+    local file_name first=1 sha
+
+    printf '%s"runtime_overrides": [\n' "$indent" >> "$out"
+    if [[ -d "$override_root" ]]; then
+        for file_name in \
+            install-profile \
+            menu-backend \
+            menu.sh \
+            menu_gui_common.sh \
+            menu_gui_user.sh \
+            menu_gui.sh \
+            create_internal_boot.sh \
+            create_flash_boot.sh \
+            zip.sh; do
+            [[ -f "$override_root/$file_name" ]] || continue
+            sha="$(audit_file_sha256 "$override_root/$file_name")"
+            if (( first == 0 )); then
+                printf ',\n' >> "$out"
+            fi
+            first=0
+            printf '%s  {"name": %s, "sha256": %s}' "$indent" "$(audit_json_string "$file_name")" "$(audit_json_string "$sha")" >> "$out"
+        done
+    fi
+    printf '\n%s]' "$indent" >> "$out"
+}
+
+audit_prune_logs() {
+    local dir="$1"
+    local max_files="${INSTALLER_AUDIT_MAX_FILES:-25}"
+    local max_bytes="${INSTALLER_AUDIT_MAX_BYTES:-1048576}"
+    local count total oldest audit_file audit_size
+
+    [[ "$max_files" =~ ^[0-9]+$ ]] || max_files=25
+    [[ "$max_bytes" =~ ^[0-9]+$ ]] || max_bytes=1048576
+    (( max_files >= 1 )) || max_files=1
+    (( max_bytes >= 4096 )) || max_bytes=4096
+
+    while true; do
+        count="$(find "$dir" -maxdepth 1 -type f -name 'flash-audit-[0-9]*.json' | wc -l | tr -d '[:space:]')"
+        total=0
+        while IFS= read -r audit_file; do
+            [[ -n "$audit_file" ]] || continue
+            audit_size="$(wc -c < "$audit_file" 2>/dev/null | tr -d '[:space:]' || true)"
+            [[ "$audit_size" =~ ^[0-9]+$ ]] || audit_size=0
+            total=$((total + audit_size))
+        done < <(find "$dir" -maxdepth 1 -type f -name 'flash-audit-[0-9]*.json' -print)
+        if (( count <= max_files && total <= max_bytes )); then
+            break
+        fi
+
+        oldest="$(find "$dir" -maxdepth 1 -type f -name 'flash-audit-[0-9]*.json' -print | sort | head -n1)"
+        [[ -n "$oldest" ]] || break
+        rm -f "$oldest" || break
+    done
+}
+
+write_internal_boot_audit_record() {
+    local status="$1" error_message="${2:-}"
+    local audit_root audit_dir timestamp filename tmp final latest zip_sha
+
+    if [[ "${PERSIST_READY:-0}" != "1" || -z "${PERSISTENT_ROOT:-}" ]]; then
+        return 0
+    fi
+
+    audit_root="${PERSISTENT_ROOT}/logs"
+    audit_dir="$audit_root"
+    mkdir -p "$audit_dir" 2>/dev/null || return 0
+    [[ -w "$audit_dir" ]] || return 0
+
+    timestamp="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date)"
+    filename="flash-audit-$(date -u '+%Y%m%dT%H%M%SZ' 2>/dev/null || date '+%Y%m%dT%H%M%S').json"
+    final="$audit_dir/$filename"
+    tmp="$final.tmp"
+    latest="$audit_dir/flash-audit-latest.json"
+    zip_sha="$(audit_file_sha256 "${ZIP_FILE:-}")"
+
+    {
+        printf '{\n'
+        printf '  "schema": "unraid-installer-flash-audit-v1",\n'
+        printf '  "timestamp": %s,\n' "$(audit_json_string "$timestamp")"
+        printf '  "action": "create_internal_boot",\n'
+        printf '  "status": %s,\n' "$(audit_json_string "$status")"
+        printf '  "error": %s,\n' "$(audit_json_string "$error_message")"
+        printf '  "unraid_zip": {\n'
+        printf '    "path": %s,\n' "$(audit_json_string "${ZIP_FILE:-}")"
+        printf '    "filename": %s,\n' "$(audit_json_string "$(basename "${ZIP_FILE:-}")")"
+        printf '    "sha256": %s\n' "$(audit_json_string "$zip_sha")"
+        printf '  },\n'
+        printf '  "boot_pool": {\n'
+        printf '    "name": %s,\n' "$(audit_json_string "${BOOT_POOL_NAME:-}")"
+        printf '    "size_mib": %s,\n' "$(audit_json_string "${SIZE:-}")"
+        printf '    "device_count": %s\n' "$(audit_json_string "${BOOT_DEVICE_COUNT:-}")"
+        printf '  },\n'
+        printf '  "targets": [\n'
+        printf '    '
+    } > "$tmp"
+    audit_write_disk_object "$tmp" "${TARGET:-}" "    " "${DISK_ID:-}" "${TARGET_PART3:-}"
+    if (( ${BOOT_DEVICE_COUNT:-1} == 2 )); then
+        printf ',\n    ' >> "$tmp"
+        audit_write_disk_object "$tmp" "${TARGET_2:-}" "    " "${DISK_ID_2:-}" "${TARGET_2_PART3:-}"
+    fi
+    {
+        printf '\n'
+        printf '  ],\n'
+        printf '  "pool_config_path": %s,\n' "$(audit_json_string "/boot-transfer/config/pools/${BOOT_POOL_NAME:-boot}.cfg")"
+    } >> "$tmp"
+    audit_write_runtime_overrides "$tmp" "  "
+    printf '\n}\n' >> "$tmp"
+
+    mv -f "$tmp" "$final" 2>/dev/null || { rm -f "$tmp"; return 0; }
+    cp -f "$final" "$latest" 2>/dev/null || true
+    audit_prune_logs "$audit_dir"
+    log_msg "Persistent audit record: $final"
 }
 
 confirm() {
@@ -747,7 +954,7 @@ if [[ "${PERSIST_READY:-0}" != "1" ]]; then
 fi
 
 if compgen -G "${ZIP_DIR}/unRAIDServer-*-x86_64.zip" > /dev/null; then
-    ZIP_FILE="$(ls -1 "${ZIP_DIR}"/unRAIDServer-*-x86_64.zip | sort -V | tail -n1)"
+    ZIP_FILE="$(find "$ZIP_DIR" -maxdepth 1 -type f -name 'unRAIDServer-*-x86_64.zip' -print | sort -V | tail -n1)"
 else
     error_msg "ERROR: no unRAIDServer zip files found in ${ZIP_DIR}"
     exit 1
@@ -940,6 +1147,7 @@ else
     [[ "$CONFIRM" != "YES" ]] && { echo "Aborted."; exit 1; }
 fi
 
+AUDIT_STARTED=1
 step_update "Preparing partition layout"
 
 # -------------------------------
@@ -1102,6 +1310,9 @@ log_msg "pool cfg written: /boot-transfer/config/pools/${BOOT_POOL_NAME}.cfg (di
 step_update "Exporting flash pool"
 run_operation zpool export flash
 
+AUDIT_STATUS="success"
+write_internal_boot_audit_record "$AUDIT_STATUS" ""
+AUDIT_WRITTEN=1
 status_msg "Internal boot image creation complete"
 log_msg "Operation log: $RUN_LOG_FILE"
 
