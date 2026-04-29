@@ -128,7 +128,7 @@ Notes:
 
 - The `build-usb-native.sh` usage above shows common options only; run `./scripts/build-usb-native.sh --help` for the full list, including partition sizing flags, `--persist-mib`, `--persist-autoexpand`, and `--tmp-dir`.
 - User build chain seeding copies only top-level `zips/` and `logs/` from the seed source.
-- Runtime overrides are applied at boot from `/mnt/persist/runtime`.
+- Runtime overrides are applied at boot from `/mnt/persist/runtime`; this path is trusted executable extension space for partner and support workflows.
 
 ## USB and Packaging Helpers
 
@@ -182,6 +182,29 @@ Runtime uses GUI-first menu scripts:
 - `menu_gui_user.sh`: base user onboarding menu
 
 At runtime, `/boot/install/menu.sh` is launched after persistence runtime overrides are applied.
+
+### Persistence Runtime Overrides
+
+`/mnt/persist/runtime` is a trusted extension point. If files with supported
+runtime names are present there, the boot flow copies them over the matching
+installer scripts in `/boot/install` before launching the menu. Script
+overrides are made executable and run as root.
+
+Supported override names currently include:
+
+- `install-profile`
+- `menu-backend`
+- `menu.sh`
+- `menu_gui_common.sh`
+- `menu_gui_user.sh`
+- `menu_gui.sh`
+- `create_internal_boot.sh`
+- `create_flash_boot.sh`
+- `zip.sh`
+
+Use this mechanism only for partner-prepared or support-prepared media where
+the persistence contents are trusted. Do not treat `runtime/` as ordinary data
+storage.
 
 ## Common Troubleshooting
 

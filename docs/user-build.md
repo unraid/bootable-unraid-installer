@@ -7,7 +7,8 @@ Define the build-chain behavior for user artifacts.
 ## Build Scope
 
 - Build scripts generate user artifacts only.
-- Partner-specific runtime behavior is not part of the build chain.
+- Partner-specific runtime behavior is not seeded by default from this build chain.
+- Partner integrations may still extend the installer at runtime through persistence.
 
 ## Primary Outputs
 
@@ -46,3 +47,19 @@ All other top-level seed items are skipped by design.
 
 Built user runtime launches via `/boot/install/menu.sh`.
 Persistence runtime overrides under `/mnt/persist/runtime` are applied before menu launch.
+
+## Partner Runtime Overrides
+
+Persistence `runtime/` is an intentional trusted extension point for partner
+and support workflows. Files placed under `/mnt/persist/runtime` can replace
+installer runtime scripts such as `menu.sh`, `create_flash_boot.sh`, and
+`zip.sh`; replacement scripts are made executable and run as root during the
+installer flow.
+
+Treat this directory as trusted code, not as general user data. Anyone who can
+write to persistence can change future installer behavior. Partner-prepared
+media may use this path to customize the installer flow.
+
+The public user build chain does not seed arbitrary top-level persistence data;
+it copies only `zips/` and `logs/` from `persistent/`. Partner tooling that
+prepares installer media may populate `runtime/` after the base image is built.
