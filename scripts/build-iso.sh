@@ -2122,9 +2122,28 @@ export PERSIST_READY PERSISTENT_ROOT PERSISTENT_ZIP_DIR
 
 ONBOARDING_DIR="/boot/install"
 
+persistent_override_sha256() {
+ local path="$1"
+ local digest=""
+
+ if command -v sha256sum >/dev/null 2>&1; then
+    digest="$(sha256sum "$path" 2>/dev/null | awk '{print $1}' || true)"
+ elif command -v busybox >/dev/null 2>&1; then
+    digest="$(busybox sha256sum "$path" 2>/dev/null | awk '{print $1}' || true)"
+ fi
+
+ if [ -n "$digest" ]; then
+    printf '%s\n' "$digest"
+ else
+    printf '%s\n' "unavailable"
+ fi
+}
+
 apply_persistent_install_overrides() {
  local override_root=""
  local file_name=""
+ local override_found=0
+ local override_sha256=""
 
  if [ "$PERSIST_READY" != "1" ] || [ -z "$PERSISTENT_ROOT" ]; then
     return 0
@@ -2146,6 +2165,28 @@ apply_persistent_install_overrides() {
     create_flash_boot.sh \
     zip.sh; do
     if [ -f "$override_root/$file_name" ]; then
+      override_found=1
+      break
+    fi
+ done
+
+ if [ "$override_found" = "1" ]; then
+    status_msg "warning: trusted persistence runtime overrides found in $override_root"
+    status_msg "warning: runtime overrides can replace installer scripts and run as root"
+ fi
+
+ for file_name in \
+    install-profile \
+    menu-backend \
+    menu.sh \
+    menu_gui_common.sh \
+    menu_gui_user.sh \
+    menu_gui.sh \
+    create_internal_boot.sh \
+    create_flash_boot.sh \
+    zip.sh; do
+    if [ -f "$override_root/$file_name" ]; then
+      override_sha256="$(persistent_override_sha256 "$override_root/$file_name")"
       cp -f "$override_root/$file_name" "$ONBOARDING_DIR/$file_name"
       case "$file_name" in
             install-profile)
@@ -2155,15 +2196,16 @@ apply_persistent_install_overrides() {
           chmod +x "$ONBOARDING_DIR/$file_name" 2>/dev/null || true
           ;;
       esac
-         boot_log "applied persistent install override: $file_name"
+         boot_log "applied persistent install override: $file_name sha256=$override_sha256"
     fi
  done
 
  # If runtime provides only menu_gui.sh, promote it to menu.sh so it wins launcher priority.
  if [ -f "$override_root/menu_gui.sh" ] && [ ! -f "$override_root/menu.sh" ]; then
+    override_sha256="$(persistent_override_sha256 "$override_root/menu_gui.sh")"
     cp -f "$override_root/menu_gui.sh" "$ONBOARDING_DIR/menu.sh"
     chmod +x "$ONBOARDING_DIR/menu.sh" 2>/dev/null || true
-    boot_log "applied persistent install override: menu_gui.sh -> menu.sh"
+    boot_log "applied persistent install override: menu_gui.sh -> menu.sh sha256=$override_sha256"
  fi
 }
 
