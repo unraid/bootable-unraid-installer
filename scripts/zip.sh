@@ -541,72 +541,12 @@ validate_release_zip_url() {
   fi
 }
 
-release_md5_url_for_zip() {
-  local url="$1"
-  local clean_url
-
-  clean_url="$(release_zip_url_without_query "$url")"
-  printf '%s\n' "${clean_url%.zip}.md5"
-}
-
-file_md5() {
-  local file="$1"
-
-  if command -v md5sum >/dev/null 2>&1; then
-    md5sum "$file" | awk '{print tolower($1)}'
-    return
-  fi
-
-  if command -v md5 >/dev/null 2>&1; then
-    md5 -q "$file" | awk '{print tolower($1)}'
-    return
-  fi
-
-  echo "Error: md5sum or md5 is required to verify Unraid ZIP downloads."
-  exit 1
-}
-
-download_verified_release_zip() {
+download_release_zip() {
   local url="$1"
   local out="$2"
-  local clean_url md5_url tmp_zip tmp_md5 dest_md5 expected_md5 actual_md5
 
   validate_release_zip_url "$url"
-
-  clean_url="$(release_zip_url_without_query "$url")"
-  md5_url="$(release_md5_url_for_zip "$url")"
-  tmp_zip="${out}.part"
-  tmp_md5="${out}.md5.part"
-  dest_md5="${out%.zip}.md5"
-
-  rm -f "$tmp_zip" "$tmp_md5"
-
-  download_file "$url" "$tmp_zip" yes
-
-  if ! download_file "$md5_url" "$tmp_md5"; then
-    rm -f "$tmp_zip" "$tmp_md5"
-    echo "Error: failed to download checksum file for $(basename "$clean_url"): ${md5_url}"
-    exit 1
-  fi
-
-  expected_md5="$(awk 'NR == 1 { print tolower($1); exit }' "$tmp_md5")"
-  if [[ ! "$expected_md5" =~ ^[0-9a-f]{32}$ ]]; then
-    rm -f "$tmp_zip" "$tmp_md5"
-    echo "Error: checksum file did not contain a valid MD5 digest: ${md5_url}"
-    exit 1
-  fi
-
-  actual_md5="$(file_md5 "$tmp_zip")"
-  if [[ "$actual_md5" != "$expected_md5" ]]; then
-    rm -f "$tmp_zip" "$tmp_md5"
-    echo "Error: integrity verification failed for $(basename "$clean_url")."
-    echo "Expected MD5 from ${md5_url}: ${expected_md5}"
-    echo "Actual MD5: ${actual_md5}"
-    exit 1
-  fi
-
-  mv -f "$tmp_zip" "$out"
-  mv -f "$tmp_md5" "$dest_md5"
+  download_file "$url" "$out" yes
 }
 
 flush_writeback_progress() {
@@ -816,7 +756,7 @@ if [ -e "$dest_file" ]; then
 fi
 
 echo "Downloading ${selected_name}..."
-download_verified_release_zip "$selected_url" "$dest_file"
+download_release_zip "$selected_url" "$dest_file"
 
 flush_writeback_progress
 echo "Saved to: ${dest_file}"
