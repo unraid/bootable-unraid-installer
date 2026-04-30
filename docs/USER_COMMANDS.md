@@ -183,6 +183,25 @@ Runtime uses GUI-first menu scripts:
 
 At runtime, `/boot/install/menu.sh` is launched after persistence runtime overrides are applied.
 
+## Persistent Flash Audit Logs
+
+When persistence is mounted, flash creation writes compact JSON audit records to
+the installer media under `/mnt/persist/logs/`.
+
+- `flash-audit-<timestamp>.json`: timestamped audit record
+- `flash-audit-latest.json`: copy of the latest audit record
+
+Audit records include the flash action, status, selected Unraid ZIP filename and
+SHA256, target device details, and runtime override SHA256s when override files
+are present. They are written to the installer media persistence partition, not
+to the target Unraid server or newly created flash device.
+
+To avoid filling persistence, audit logs are pruned after writes. Defaults keep
+at most 25 timestamped audit files and at most 1 MiB total timestamped audit log
+data. Override with `INSTALLER_AUDIT_MAX_FILES` and
+`INSTALLER_AUDIT_MAX_BYTES` if a partner workflow needs a different retention
+window.
+
 ## Common Troubleshooting
 
 1. Kernel/ZFS did not rebuild:
