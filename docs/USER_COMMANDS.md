@@ -195,6 +195,7 @@ Maintenance note: keep this list synchronized with the hardcoded whitelist in
 
 Supported override names currently include:
 
+- `build_activation_json.sh`
 - `install-profile`
 - `menu-backend`
 - `menu.sh`
