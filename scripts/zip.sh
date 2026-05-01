@@ -501,6 +501,54 @@ download_file() {
   mv -f "$tmp_out" "$out"
 }
 
+release_zip_url_without_query() {
+  local url="$1"
+  printf '%s\n' "${url%%\?*}"
+}
+
+release_zip_filename() {
+  local url="$1"
+  local clean_url
+  clean_url="$(release_zip_url_without_query "$url")"
+  basename "$clean_url"
+}
+
+validate_release_zip_url() {
+  local url="$1"
+  local clean_url filename
+
+  clean_url="$(release_zip_url_without_query "$url")"
+  filename="$(basename "$clean_url")"
+
+  if [[ "$url" == *"#"* ]]; then
+    echo "Error: release URL contains a fragment, which is not allowed: ${url}"
+    exit 1
+  fi
+
+  if [[ "$clean_url" != https://releases.unraid.net/dl/* ]]; then
+    echo "Error: release URL must use https://releases.unraid.net/dl/: ${url}"
+    exit 1
+  fi
+
+  if [[ "$clean_url" == *"/../"* || "$clean_url" == *"/./"* ]]; then
+    echo "Error: release URL path contains unsupported relative path segments: ${url}"
+    exit 1
+  fi
+
+  if [[ ! "$filename" =~ ^unRAIDServer-[A-Za-z0-9._-]+-x86_64\.zip$ ]]; then
+    echo "Error: release URL does not reference a supported Unraid ZIP filename: ${url}"
+    exit 1
+  fi
+}
+
+download_release_zip() {
+  local url="$1"
+  local out="$2"
+
+  validate_release_zip_url "$url"
+  download_file "$url" "$out" yes
+}
+
 flush_writeback_progress() {
   local start_ts elapsed dirty_kb writeback_kb
   local max_wait_s settle_kb stable_polls stable_count timed_out
@@ -691,7 +739,9 @@ if [[ -z "$selected_url" ]]; then
   exit 1
 fi
 
-filename="$(basename "${selected_url%%\?*}")"
+validate_release_zip_url "$selected_url"
+
+filename="$(release_zip_filename "$selected_url")"
 dest_file="${ZIP_DIR}/${filename}"
 
 if [ -e "$dest_file" ]; then
@@ -706,7 +756,7 @@ if [ -e "$dest_file" ]; then
 fi
 
 echo "Downloading ${selected_name}..."
-download_file "$selected_url" "$dest_file" yes
+download_release_zip "$selected_url" "$dest_file"
 
 flush_writeback_progress
 echo "Saved to: ${dest_file}"
