@@ -314,6 +314,16 @@ jobs:
             echo "Skipping cache save because cache content is incomplete (missing kernel or zfs build stamp)."
           fi
 
+      - name: Prune rootfs from cache payload
+        if: ${{ always() && steps.cache-complete.outputs.ready == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -d zfs-live-build/rootfs ]]; then
+            sudo rm -rf zfs-live-build/rootfs
+          fi
+
       - name: Save build cache (kernel/ZFS/rootfs)
         if: ${{ always() && steps.cache-complete.outputs.ready == 'true' }}
         uses: actions/cache/save@v4

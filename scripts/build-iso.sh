@@ -156,7 +156,7 @@ MENU_UI="${MENU_UI:-gui}"
 MENU_BACKEND_DEFAULT="${MENU_BACKEND_DEFAULT:-}"
 BOOT_PERSIST_FS="${BOOT_PERSIST_FS:-}"
 BOOT_PERSIST_RECREATE_ON_RESIZE_FAIL="${BOOT_PERSIST_RECREATE_ON_RESIZE_FAIL:-0}"
-UBUNTU_CODENAME="${UBUNTU_CODENAME:-questing}"
+UBUNTU_CODENAME="${UBUNTU_CODENAME:-resolute}"
 UBUNTU_MIRROR="${UBUNTU_MIRROR:-http://gb.archive.ubuntu.com/ubuntu/}"
 UBUNTU_SECURITY_MIRROR="${UBUNTU_SECURITY_MIRROR:-http://security.ubuntu.com/ubuntu/}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -2155,6 +2155,7 @@ apply_persistent_install_overrides() {
  fi
 
  for file_name in \
+    build_activation_json.sh \
     install-profile \
     menu-backend \
     menu.sh \
