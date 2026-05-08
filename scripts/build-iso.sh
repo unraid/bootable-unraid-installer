@@ -2177,6 +2177,7 @@ apply_persistent_install_overrides() {
  fi
 
  for file_name in \
+    build_activation_json.sh \
     install-profile \
     menu-backend \
     menu.sh \
