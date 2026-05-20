@@ -326,13 +326,18 @@ path = Path(sys.argv[1])
 if not path.is_file():
     raise SystemExit(f"Unraid release lock not found: {path}")
 lock = json.loads(path.read_text())
-required = ["name", "version", "url", "filename", "sha256"]
+required = ["channel", "name", "version", "url", "filename", "sha256"]
 missing = [key for key in required if not lock.get(key)]
 if missing:
     raise SystemExit(f"Unraid release lock missing required fields: {', '.join(missing)}")
+if lock["channel"] != "stable":
+    raise SystemExit("Unraid release lock channel must be stable")
 parsed = urllib.parse.urlsplit(lock["url"])
 if parsed.scheme != "https" or parsed.netloc != "releases.unraid.net":
     raise SystemExit("Unraid release lock URL must use https://releases.unraid.net")
+path_parts = [part for part in parsed.path.split("/") if part]
+if len(path_parts) < 5 or path_parts[:2] != ["dl", "stable"]:
+    raise SystemExit("Unraid release lock URL must point to the stable release channel")
 if not re.fullmatch(r"[0-9a-f]{64}", lock["sha256"]):
     raise SystemExit("Unraid release lock sha256 must be 64 lowercase hex characters")
 url_sha256 = lock.get("url_sha256")

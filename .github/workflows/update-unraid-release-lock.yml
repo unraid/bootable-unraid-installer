@@ -36,7 +36,7 @@ jobs:
           PY
           )"
 
-          python3 scripts/update-unraid-release-lock.py --verify-download
+          python3 scripts/update-unraid-release-lock.py --channel stable --verify-download
 
           latest_version="$(python3 - <<'PY'
           import json
@@ -71,13 +71,18 @@ jobs:
           from pathlib import Path
 
           lock = json.loads(Path("build/unraid-release-lock.json").read_text())
-          required = ["schema", "version", "url", "filename", "sha256"]
+          required = ["schema", "channel", "version", "url", "filename", "sha256"]
           missing = [key for key in required if not lock.get(key)]
           if missing:
               raise SystemExit(f"missing required lock fields: {missing}")
+          if lock["channel"] != "stable":
+              raise SystemExit("lock channel must be stable")
           parsed = urllib.parse.urlsplit(lock["url"])
           if parsed.scheme != "https" or parsed.netloc != "releases.unraid.net":
               raise SystemExit("lock URL must use https://releases.unraid.net")
+          path_parts = [part for part in parsed.path.split("/") if part]
+          if len(path_parts) < 5 or path_parts[:2] != ["dl", "stable"]:
+              raise SystemExit("lock URL must point to the stable release channel")
           if not re.fullmatch(r"[0-9a-f]{64}", lock["sha256"]):
               raise SystemExit("lock sha256 must be 64 lowercase hex characters")
           url_sha256 = lock.get("url_sha256")
@@ -115,11 +120,11 @@ jobs:
             echo
             echo "Validation performed by workflow:"
             echo "- fetched USB Creator release metadata"
-            echo "- selected the latest Unraid OS release at or above 7.3.0"
-            echo "- validated the releases.unraid.net URL and SHA256 path digest"
+            echo "- selected the latest stable Unraid OS release at or above 7.3.0"
+            echo "- validated the releases.unraid.net stable URL and downloaded payload SHA256"
             echo "- updated build/unraid-release-lock.json"
             echo
-            echo "The workflow also dispatches Build Install Images on this branch, auto-merges this PR when that validation build succeeds, and publishes both seeded and online release assets."
+            echo "The workflow also dispatches Build Install Images on this branch, auto-merges this PR when that validation build succeeds, publishes both seeded and online release assets for the latest stable release, and removes bundled seeded assets from older Installer releases."
           } > "$body"
 
           existing="$(gh pr list --head "$branch" --state open --json number --jq '.[0].number')"
@@ -256,3 +261,41 @@ jobs:
 
           publish_release_assets publish-release-seeded.yml "Seeded installer release"
           publish_release_assets publish-release.yml "Online installer release"
+
+          cleanup_previous_seeded_assets() {
+            local current_version="$1"
+            local current_tag="Installer-${current_version}"
+            local release_tags
+            local tag
+            local asset
+            local is_older
+
+            release_tags="$(gh release list \
+              --limit 100 \
+              --json tagName,isDraft,isPrerelease \
+              --jq '.[] | select(.isDraft == false and .isPrerelease == false) | .tagName')"
+
+            while IFS= read -r tag; do
+              [[ "$tag" =~ ^Installer-[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
+              [[ "$tag" != "$current_tag" ]] || continue
+
+              is_older="$(python3 - "$current_version" "${tag#Installer-}" <<'PY'
+          import sys
+
+          current = tuple(int(part) for part in sys.argv[1].split("."))
+          candidate = tuple(int(part) for part in sys.argv[2].split("."))
+          print("true" if candidate < current else "false")
+          PY
+          )"
+              [[ "$is_older" == "true" ]] || continue
+
+              for asset in install-user.img.zip install-user.img.zip.md5; do
+                if gh release view "$tag" --json assets --jq '.assets[].name' | grep -Fxq "$asset"; then
+                  gh release delete-asset "$tag" "$asset" --yes
+                  gh pr comment "$PR_NUMBER" --body "Removed older bundled seeded asset \`${asset}\` from \`${tag}\`; online installer assets remain available."
+                fi
+              done
+            done <<< "$release_tags"
+          }
+
+          cleanup_previous_seeded_assets "$LATEST_VERSION"

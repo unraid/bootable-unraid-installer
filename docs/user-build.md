@@ -43,12 +43,14 @@ The user build chain seeds only top-level allowed items from `persistent/`:
 
 All other top-level seed items are skipped by design.
 
-Seeded public IMG artifacts also download the pinned Unraid OS ZIP from
+Seeded public IMG artifacts also download the pinned stable Unraid OS ZIP from
 `build/unraid-release-lock.json` into persistence at build time. This bundled
 payload is approved for redistribution as part of the official installer image
 because it is an alternative Unraid install method. The
-`update-unraid-release-lock.yml` workflow checks for new Unraid OS releases and
-opens a pull request when the pinned payload should move.
+`update-unraid-release-lock.yml` workflow checks for new stable Unraid OS
+releases and opens a pull request when the pinned payload should move. After the
+latest stable seeded image is published, older `Installer-*` releases keep their
+online installer assets but have bundled seeded IMG assets removed.
 
 ## Runtime Menu Behavior
 

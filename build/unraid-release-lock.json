@@ -2,8 +2,10 @@
   "schema": 1,
   "source": {
     "metadata_url": "https://releases.unraid.net/usb-creator",
-    "minimum_version": "7.3.0"
+    "minimum_version": "7.3.0",
+    "channel": "stable"
   },
+  "channel": "stable",
   "name": "Unraid 7.3.0",
   "version": "7.3.0",
   "release_date": "2026-05-12",
@@ -14,5 +16,5 @@
   "url_sha256": "56144fb963526391630f54b842b30727b159e1bc0375142e34f265daa29d49f7",
   "image_download_size": 1181246664,
   "extract_size": 1181238698,
-  "updated_at": "2026-05-20T15:04:00+00:00"
+  "updated_at": "2026-05-20T15:31:06+00:00"
 }
