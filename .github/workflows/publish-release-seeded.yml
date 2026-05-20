@@ -196,8 +196,10 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.meta.outputs.release_tag }}
+          RELEASE_VERSION: ${{ steps.meta.outputs.release_version }}
         run: |
           set -euo pipefail
           ./scripts/update-release-download-options.sh \
-            --release-tag "${{ steps.meta.outputs.release_tag }}" \
-            --release-version "${{ steps.meta.outputs.release_version }}"
+            --release-tag "$RELEASE_TAG" \
+            --release-version "$RELEASE_VERSION"
