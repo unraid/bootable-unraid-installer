@@ -14,7 +14,7 @@ Define the build-chain behavior for user artifacts.
 
 - `zfs-live-build/install-user.iso`
 - `zfs-live-build/install-user.img`
-- `zfs-live-build/install-user-minimal.img`
+- `zfs-live-build/install-user-minimal.img` online installer image
 
 ## Build Entry Point
 
