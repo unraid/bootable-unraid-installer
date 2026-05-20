@@ -31,7 +31,7 @@ Release artifact provenance:
 - `.github/workflows/prime-build-cache.yml` refreshes the kernel/OpenZFS cache used by release builds.
 - Seeded IMG builds bundle the pinned stable Unraid OS release from `build/unraid-release-lock.json`; redistribution is approved because this repository publishes an official alternative Unraid install method.
 - `.github/workflows/update-unraid-release-lock.yml` checks for new stable Unraid OS releases and opens/updates a PR when the pinned release lock changes.
-- After publishing the latest stable seeded image, the release-lock workflow removes bundled `install-user.img.zip` assets from older `Installer-*` releases. Older releases keep their online installer assets.
+- After publishing the latest stable seeded image, the release-lock workflow removes bundled `install-user.img.zip` assets from older or non-stable `Installer-*` releases. Those releases keep their online installer assets when present.
 
 ### Run User Automation Build
 
