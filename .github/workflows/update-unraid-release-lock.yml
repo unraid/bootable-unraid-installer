@@ -36,7 +36,7 @@ jobs:
           PY
           )"
 
-          python3 scripts/update-unraid-release-lock.py
+          python3 scripts/update-unraid-release-lock.py --verify-download
 
           latest_version="$(python3 - <<'PY'
           import json
@@ -80,8 +80,9 @@ jobs:
               raise SystemExit("lock URL must use https://releases.unraid.net")
           if not re.fullmatch(r"[0-9a-f]{64}", lock["sha256"]):
               raise SystemExit("lock sha256 must be 64 lowercase hex characters")
-          if lock["sha256"] not in parsed.path:
-              raise SystemExit("lock sha256 must match the release URL path digest")
+          url_sha256 = lock.get("url_sha256")
+          if url_sha256 and not re.fullmatch(r"[0-9a-f]{64}", url_sha256):
+              raise SystemExit("lock url_sha256 must be 64 lowercase hex characters when present")
           PY
 
       - name: Open update pull request

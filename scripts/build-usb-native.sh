@@ -335,8 +335,9 @@ if parsed.scheme != "https" or parsed.netloc != "releases.unraid.net":
     raise SystemExit("Unraid release lock URL must use https://releases.unraid.net")
 if not re.fullmatch(r"[0-9a-f]{64}", lock["sha256"]):
     raise SystemExit("Unraid release lock sha256 must be 64 lowercase hex characters")
-if lock["sha256"] not in parsed.path:
-    raise SystemExit("Unraid release lock sha256 must match the release URL path digest")
+url_sha256 = lock.get("url_sha256")
+if url_sha256 and not re.fullmatch(r"[0-9a-f]{64}", url_sha256):
+    raise SystemExit("Unraid release lock url_sha256 must be 64 lowercase hex characters when present")
 print("\t".join([lock["name"], lock["version"], lock["url"], lock["filename"], lock["sha256"]]))
 PY
 }
