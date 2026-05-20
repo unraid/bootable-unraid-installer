@@ -8,6 +8,9 @@ ZIP_ROOT="${PERSISTENT_ROOT:-/mnt/persist}"
 ZIP_DIR="${PERSISTENT_ZIP_DIR:-${ZIP_ROOT}/zips}"
 LEGACY_ZIP_DIR="${ZIP_ROOT}/zip"
 ZIP_DIR_OVERRIDE=""
+RELEASE_URL_OVERRIDE=""
+RELEASE_NAME_OVERRIDE=""
+EXPECTED_SHA256=""
 UI_MODE="${UI_MODE:-text}"
 ui_backend="text"
 LATEST_ONLY=0
@@ -29,7 +32,10 @@ Options:
   --zip-dir PATH   Store downloaded zip files in PATH instead of persistence mount.
   --ui MODE        UI mode: text or gui (default: text)
   --latest         Download the latest available release >= MIN_VERSION and exit.
-  --non-interactive  Disable prompts; requires --latest.
+  --release-url URL  Download a specific Unraid release ZIP URL.
+  --release-name NAME  Display name for --release-url downloads.
+  --expected-sha256 SHA256  Verify the downloaded release ZIP digest.
+  --non-interactive  Disable prompts; requires --latest or --release-url.
   -h, --help       Show this help.
 EOF
 }
@@ -246,6 +252,33 @@ while (($#)); do
       LATEST_ONLY=1
       shift
       ;;
+    --release-url)
+      [[ $# -ge 2 ]] || {
+        echo "Error: missing value for --release-url"
+        usage
+        exit 1
+      }
+      RELEASE_URL_OVERRIDE="$2"
+      shift 2
+      ;;
+    --release-name)
+      [[ $# -ge 2 ]] || {
+        echo "Error: missing value for --release-name"
+        usage
+        exit 1
+      }
+      RELEASE_NAME_OVERRIDE="$2"
+      shift 2
+      ;;
+    --expected-sha256)
+      [[ $# -ge 2 ]] || {
+        echo "Error: missing value for --expected-sha256"
+        usage
+        exit 1
+      }
+      EXPECTED_SHA256="$2"
+      shift 2
+      ;;
     --non-interactive)
       NON_INTERACTIVE=1
       shift
@@ -270,8 +303,18 @@ case "$UI_MODE" in
     ;;
 esac
 
-if [[ "$NON_INTERACTIVE" -eq 1 && "$LATEST_ONLY" -ne 1 ]]; then
-  echo "Error: --non-interactive requires --latest"
+if [[ "$LATEST_ONLY" -eq 1 && -n "$RELEASE_URL_OVERRIDE" ]]; then
+  echo "Error: --latest and --release-url cannot be used together"
+  exit 1
+fi
+
+if [[ "$NON_INTERACTIVE" -eq 1 && "$LATEST_ONLY" -ne 1 && -z "$RELEASE_URL_OVERRIDE" ]]; then
+  echo "Error: --non-interactive requires --latest or --release-url"
+  exit 1
+fi
+
+if [[ -n "$EXPECTED_SHA256" && ! "$EXPECTED_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+  echo "Error: --expected-sha256 must be a 64-character lowercase hex digest"
   exit 1
 fi
 
@@ -549,6 +592,21 @@ download_release_zip() {
   download_file "$url" "$out" yes
 }
 
+verify_release_zip_sha256() {
+  local file="$1"
+  local expected="$2"
+  local actual
+
+  actual="$(sha256sum "$file" | awk '{print tolower($1)}')"
+  if [[ "$actual" != "$expected" ]]; then
+    rm -f "$file"
+    echo "Error: integrity verification failed for $(basename "$file")."
+    echo "Expected SHA256: ${expected}"
+    echo "Actual SHA256: ${actual}"
+    exit 1
+  fi
+}
+
 flush_writeback_progress() {
   local start_ts elapsed dirty_kb writeback_kb
   local max_wait_s settle_kb stable_polls stable_count timed_out
@@ -639,102 +697,108 @@ flush_writeback_progress() {
   fi
 }
 
-download_file "$JSON_URL" "$TMP_JSON"
-
-if ! command -v php >/dev/null 2>&1; then
-  echo "Error: php is required to parse release metadata."
-  exit 1
-fi
-
-RELEASES_FILE="$(mktemp)"
-# The PHP parser is intentionally single-quoted so the shell does not expand PHP variables.
-# shellcheck disable=SC2016
-php -r '
-  $json = json_decode(file_get_contents($argv[1]), true);
-  if (!is_array($json)) {
-    fwrite(STDERR, "Invalid JSON\\n");
-    exit(1);
-  }
-  $emit = function(array $entry) use ($argv) {
-    $name = $entry["name"] ?? "";
-    $url = $entry["url"] ?? "";
-    $date = $entry["release_date"] ?? "";
-
-    if (!preg_match("/\\b(\\d+\\.\\d+(?:\\.\\d+)*)\\b/", $name, $m)) return;
-    $version = $m[1];
-    if (version_compare($version, $argv[2], "<")) return;
-    if ($url === "" || stripos($url, ".zip") === false) return;
-
-    echo $name . "|" . $version . "|" . $date . "|" . $url . PHP_EOL;
-  };
-
-  foreach (($json["os_list"] ?? []) as $entry) {
-    if (!is_array($entry)) continue;
-    $emit($entry);
-
-    foreach (($entry["subitems"] ?? []) as $subitem) {
-      if (!is_array($subitem)) continue;
-      $emit($subitem);
-    }
-  }
-' "$TMP_JSON" "$MIN_VERSION" > "$RELEASES_FILE"
-
-mapfile -t RELEASES < "$RELEASES_FILE"
-rm -f "$RELEASES_FILE"
-
-if [ ${#RELEASES[@]} -eq 0 ]; then
-  echo "No Unraid ${MIN_VERSION}+ zip releases were found."
-  exit 1
-fi
-
 selected=""
-if [[ "$LATEST_ONLY" -eq 1 ]]; then
-  selected="$(printf '%s\n' "${RELEASES[@]}" | sort -t'|' -k2,2V | tail -n1)"
-elif [[ "$ui_backend" != "text" ]]; then
-  menu_args=()
-  for i in "${!RELEASES[@]}"; do
-    IFS='|' read -r name _version _date _url <<< "${RELEASES[$i]}"
-    if [[ -n "$_date" ]]; then
-      menu_args+=("$i" "$name ($_date)")
-    else
-      menu_args+=("$i" "$name")
-    fi
-  done
-
-  choice="$(ui_menu_select "Select Release" "Select a release to download" "${menu_args[@]}")" || {
-    echo "No download selected."
-    exit 0
-  }
-  selected="${RELEASES[$choice]}"
+if [[ -n "$RELEASE_URL_OVERRIDE" ]]; then
+  validate_release_zip_url "$RELEASE_URL_OVERRIDE"
+  selected_name="${RELEASE_NAME_OVERRIDE:-$(release_zip_filename "$RELEASE_URL_OVERRIDE")}"
+  selected_url="$RELEASE_URL_OVERRIDE"
 else
-  echo
-  echo "Available Unraid ${MIN_VERSION}+ zip releases:"
-  echo
-  for i in "${!RELEASES[@]}"; do
-    IFS='|' read -r name _version _date url <<< "${RELEASES[$i]}"
-    printf '%2d) %s' "$((i + 1))" "$name"
-    if [ -n "$_date" ]; then
-      printf ' (%s)' "$_date"
-    fi
-    printf '\n'
-  done
-  echo
+  download_file "$JSON_URL" "$TMP_JSON"
 
-  while true; do
-    choice="$(ui_prompt "Select Release" "Select a release number to download (0 or Enter to exit)")"
-    if [[ -z "$choice" || "$choice" == "0" ]]; then
+  if ! command -v php >/dev/null 2>&1; then
+    echo "Error: php is required to parse release metadata."
+    exit 1
+  fi
+
+  RELEASES_FILE="$(mktemp)"
+  # The PHP parser is intentionally single-quoted so the shell does not expand PHP variables.
+  # shellcheck disable=SC2016
+  php -r '
+    $json = json_decode(file_get_contents($argv[1]), true);
+    if (!is_array($json)) {
+      fwrite(STDERR, "Invalid JSON\\n");
+      exit(1);
+    }
+    $emit = function(array $entry) use ($argv) {
+      $name = $entry["name"] ?? "";
+      $url = $entry["url"] ?? "";
+      $date = $entry["release_date"] ?? "";
+
+      if (!preg_match("/\\b(\\d+\\.\\d+(?:\\.\\d+)*)\\b/", $name, $m)) return;
+      $version = $m[1];
+      if (version_compare($version, $argv[2], "<")) return;
+      if ($url === "" || stripos($url, ".zip") === false) return;
+
+      echo $name . "|" . $version . "|" . $date . "|" . $url . PHP_EOL;
+    };
+
+    foreach (($json["os_list"] ?? []) as $entry) {
+      if (!is_array($entry)) continue;
+      $emit($entry);
+
+      foreach (($entry["subitems"] ?? []) as $subitem) {
+        if (!is_array($subitem)) continue;
+        $emit($subitem);
+      }
+    }
+  ' "$TMP_JSON" "$MIN_VERSION" > "$RELEASES_FILE"
+
+  mapfile -t RELEASES < "$RELEASES_FILE"
+  rm -f "$RELEASES_FILE"
+
+  if [ ${#RELEASES[@]} -eq 0 ]; then
+    echo "No Unraid ${MIN_VERSION}+ zip releases were found."
+    exit 1
+  fi
+
+  if [[ "$LATEST_ONLY" -eq 1 ]]; then
+    selected="$(printf '%s\n' "${RELEASES[@]}" | sort -t'|' -k2,2V | tail -n1)"
+  elif [[ "$ui_backend" != "text" ]]; then
+    menu_args=()
+    for i in "${!RELEASES[@]}"; do
+      IFS='|' read -r name _version _date _url <<< "${RELEASES[$i]}"
+      if [[ -n "$_date" ]]; then
+        menu_args+=("$i" "$name ($_date)")
+      else
+        menu_args+=("$i" "$name")
+      fi
+    done
+
+    choice="$(ui_menu_select "Select Release" "Select a release to download" "${menu_args[@]}")" || {
       echo "No download selected."
       exit 0
-    fi
-    if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le ${#RELEASES[@]} ]; then
-      break
-    fi
-    echo "Invalid selection. Enter a number between 1 and ${#RELEASES[@]}, or 0/Enter to exit."
-  done
+    }
+    selected="${RELEASES[$choice]}"
+  else
+    echo
+    echo "Available Unraid ${MIN_VERSION}+ zip releases:"
+    echo
+    for i in "${!RELEASES[@]}"; do
+      IFS='|' read -r name _version _date url <<< "${RELEASES[$i]}"
+      printf '%2d) %s' "$((i + 1))" "$name"
+      if [ -n "$_date" ]; then
+        printf ' (%s)' "$_date"
+      fi
+      printf '\n'
+    done
+    echo
 
-  selected="${RELEASES[$((choice - 1))]}"
+    while true; do
+      choice="$(ui_prompt "Select Release" "Select a release number to download (0 or Enter to exit)")"
+      if [[ -z "$choice" || "$choice" == "0" ]]; then
+        echo "No download selected."
+        exit 0
+      fi
+      if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le ${#RELEASES[@]} ]; then
+        break
+      fi
+      echo "Invalid selection. Enter a number between 1 and ${#RELEASES[@]}, or 0/Enter to exit."
+    done
+
+    selected="${RELEASES[$((choice - 1))]}"
+  fi
+  IFS='|' read -r selected_name _selected_version _selected_date selected_url <<< "$selected"
 fi
-IFS='|' read -r selected_name _selected_version _selected_date selected_url <<< "$selected"
 
 if [[ -z "$selected_url" ]]; then
   echo "No valid release URL selected."
@@ -748,7 +812,10 @@ dest_file="${ZIP_DIR}/${filename}"
 
 if [ -e "$dest_file" ]; then
   if [[ "$NON_INTERACTIVE" -eq 1 ]]; then
-    echo "Latest release already present: ${dest_file}"
+    if [[ -n "$EXPECTED_SHA256" ]]; then
+      verify_release_zip_sha256 "$dest_file" "$EXPECTED_SHA256"
+    fi
+    echo "Release already present: ${dest_file}"
     exit 0
   fi
   if ! ui_confirm "Overwrite File" "${filename} already exists. Overwrite?" "n"; then
@@ -759,6 +826,9 @@ fi
 
 echo "Downloading ${selected_name}..."
 download_release_zip "$selected_url" "$dest_file"
+if [[ -n "$EXPECTED_SHA256" ]]; then
+  verify_release_zip_sha256 "$dest_file" "$EXPECTED_SHA256"
+fi
 
 flush_writeback_progress
 echo "Saved to: ${dest_file}"

@@ -1,0 +1,200 @@
+name: Update Unraid Release Lock
+
+on:
+  schedule:
+    - cron: '23 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        # actions/checkout v4, pinned to the tag target. Refresh with:
+        # git ls-remote https://github.com/actions/checkout.git refs/tags/v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+
+      - name: Update Unraid release lock
+        id: lock
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          current_version="$(python3 - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path("build/unraid-release-lock.json")
+          if path.exists():
+              print(json.loads(path.read_text()).get("version", ""))
+          PY
+          )"
+
+          python3 scripts/update-unraid-release-lock.py
+
+          latest_version="$(python3 - <<'PY'
+          import json
+          from pathlib import Path
+          lock = json.loads(Path("build/unraid-release-lock.json").read_text())
+          print(lock["version"])
+          PY
+          )"
+
+          {
+            echo "current_version=$current_version"
+            echo "latest_version=$latest_version"
+          } >> "$GITHUB_OUTPUT"
+
+          if git diff --quiet -- build/unraid-release-lock.json; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Validate release lock
+        if: steps.lock.outputs.changed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 -m json.tool build/unraid-release-lock.json >/dev/null
+          python3 - <<'PY'
+          import json
+          import re
+          import urllib.parse
+          from pathlib import Path
+
+          lock = json.loads(Path("build/unraid-release-lock.json").read_text())
+          required = ["schema", "version", "url", "filename", "sha256"]
+          missing = [key for key in required if not lock.get(key)]
+          if missing:
+              raise SystemExit(f"missing required lock fields: {missing}")
+          parsed = urllib.parse.urlsplit(lock["url"])
+          if parsed.scheme != "https" or parsed.netloc != "releases.unraid.net":
+              raise SystemExit("lock URL must use https://releases.unraid.net")
+          if not re.fullmatch(r"[0-9a-f]{64}", lock["sha256"]):
+              raise SystemExit("lock sha256 must be 64 lowercase hex characters")
+          if lock["sha256"] not in parsed.path:
+              raise SystemExit("lock sha256 must match the release URL path digest")
+          PY
+
+      - name: Open update pull request
+        id: pr
+        if: steps.lock.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LATEST_VERSION: ${{ steps.lock.outputs.latest_version }}
+          CURRENT_VERSION: ${{ steps.lock.outputs.current_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          branch="update/unraid-os-${LATEST_VERSION}"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$branch"
+          git add build/unraid-release-lock.json
+          git commit -m "chore: update Unraid OS release lock to ${LATEST_VERSION}"
+          git push --force-with-lease origin "$branch"
+
+          body="$(mktemp)"
+          {
+            echo "Updates the seeded installer Unraid OS payload lock."
+            echo
+            echo "Current version: ${CURRENT_VERSION:-none}"
+            echo "Latest version: ${LATEST_VERSION}"
+            echo
+            echo "Validation performed by workflow:"
+            echo "- fetched USB Creator release metadata"
+            echo "- selected the latest Unraid OS release at or above 7.3.0"
+            echo "- validated the releases.unraid.net URL and SHA256 path digest"
+            echo "- updated build/unraid-release-lock.json"
+            echo
+            echo "The workflow also dispatches Build Install Images on this branch and auto-merges this PR when that validation build succeeds."
+          } > "$body"
+
+          existing="$(gh pr list --head "$branch" --state open --json number --jq '.[0].number')"
+          if [[ -n "$existing" ]]; then
+            gh pr edit "$existing" --title "Update Unraid OS release lock to ${LATEST_VERSION}" --body-file "$body"
+          else
+            gh pr create \
+              --base main \
+              --head "$branch" \
+              --title "Update Unraid OS release lock to ${LATEST_VERSION}" \
+              --body-file "$body"
+          fi
+
+          pr_number="$(gh pr list --head "$branch" --state open --json number --jq '.[0].number')"
+          echo "pr_number=$pr_number" >> "$GITHUB_OUTPUT"
+
+      - name: Validate seeded image build and auto-merge
+        if: steps.lock.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.pr.outputs.branch }}
+          PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
+          LATEST_VERSION: ${{ steps.lock.outputs.latest_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gh workflow run build-images.yml \
+            --ref "$BRANCH" \
+            -f persist_fs=vfat \
+            -f menu_backend=auto \
+            -f clean_build=false \
+            -f force=true \
+            -f publish=false
+
+          run_id=""
+          run_url=""
+          for _ in {1..24}; do
+            run_info="$(gh run list \
+              --workflow=build-images.yml \
+              --branch "$BRANCH" \
+              --event workflow_dispatch \
+              --limit=1 \
+              --json=databaseId,url \
+              --jq='.[0] // {}')"
+            run_id="$(jq -r '.databaseId // ""' <<< "$run_info")"
+            run_url="$(jq -r '.url // ""' <<< "$run_info")"
+            [[ -n "$run_id" ]] && break
+            sleep 5
+          done
+
+          if [[ -z "$run_id" ]]; then
+            gh pr comment "$PR_NUMBER" --body "Unable to locate dispatched Build Install Images run for branch \`${BRANCH}\`."
+            exit 1
+          fi
+
+          gh run watch "$run_id" --exit-status
+          conclusion="$(gh run view "$run_id" --json conclusion --jq '.conclusion')"
+          if [[ "$conclusion" != "success" ]]; then
+            gh pr comment "$PR_NUMBER" --body "Seeded image validation build failed for Unraid OS ${LATEST_VERSION}: ${run_url}"
+            exit 1
+          fi
+
+          body="$(mktemp)"
+          {
+            echo "Seeded image validation build succeeded for Unraid OS ${LATEST_VERSION} on branch \`${BRANCH}\`."
+            echo
+            echo "Build run: ${run_url}"
+            echo
+            echo "Auto-merging this release lock update."
+          } > "$body"
+
+          gh pr comment "$PR_NUMBER" --body-file "$body"
+
+          gh pr merge "$PR_NUMBER" \
+            --squash \
+            --delete-branch \
+            --subject "chore: update Unraid OS release lock to ${LATEST_VERSION}" \
+            --body "Automated Unraid OS release lock update after successful seeded image validation build: ${run_url}"
