@@ -174,4 +174,4 @@ jobs:
           files: |
             release-assets/install-user.img.zip
             release-assets/install-user.img.zip.md5
-          generate_release_notes: true
+          generate_release_notes: false
