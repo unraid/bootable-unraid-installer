@@ -22,14 +22,18 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        # actions/checkout v4, pinned to the tag target. Refresh with:
+        # git ls-remote https://github.com/actions/checkout.git refs/tags/v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
 
       - name: Restore build cache (kernel/ZFS/rootfs)
         id: restore-build-cache
-        uses: actions/cache/restore@v4
+        # actions/cache v4, pinned to the tag target. Refresh with:
+        # git ls-remote https://github.com/actions/cache.git refs/tags/v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: zfs-live-build
           key: install-build-v3-${{ runner.os }}-${{ hashFiles('build/version-lock.json') }}-run-${{ github.run_id }}
@@ -112,7 +116,7 @@ jobs:
 
       - name: Save build cache (kernel/ZFS/rootfs)
         if: ${{ always() && steps.cache-complete.outputs.ready == 'true' }}
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: zfs-live-build
           key: install-build-v3-${{ runner.os }}-${{ hashFiles('build/version-lock.json') }}-run-${{ github.run_id }}
