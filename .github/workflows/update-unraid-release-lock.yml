@@ -262,13 +262,13 @@ jobs:
           publish_release_assets publish-release-seeded.yml "Seeded installer release"
           publish_release_assets publish-release.yml "Online installer release"
 
-          cleanup_previous_seeded_assets() {
+          cleanup_stale_seeded_assets() {
             local current_version="$1"
             local current_tag="Installer-${current_version}"
             local release_tags
             local tag
             local asset
-            local is_older
+            local should_cleanup
 
             release_tags="$(gh release list \
               --limit 100 \
@@ -276,26 +276,31 @@ jobs:
               --jq '.[] | select(.isDraft == false and .isPrerelease == false) | .tagName')"
 
             while IFS= read -r tag; do
-              [[ "$tag" =~ ^Installer-[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
+              [[ "$tag" == Installer-* ]] || continue
               [[ "$tag" != "$current_tag" ]] || continue
 
-              is_older="$(python3 - "$current_version" "${tag#Installer-}" <<'PY'
+              should_cleanup="$(python3 - "$current_version" "${tag#Installer-}" <<'PY'
+          import re
           import sys
 
           current = tuple(int(part) for part in sys.argv[1].split("."))
-          candidate = tuple(int(part) for part in sys.argv[2].split("."))
-          print("true" if candidate < current else "false")
+          candidate_text = sys.argv[2]
+          if not re.fullmatch(r"\d+\.\d+\.\d+", candidate_text):
+              print("true")
+          else:
+              candidate = tuple(int(part) for part in candidate_text.split("."))
+              print("true" if candidate < current else "false")
           PY
           )"
-              [[ "$is_older" == "true" ]] || continue
+              [[ "$should_cleanup" == "true" ]] || continue
 
               for asset in install-user.img.zip install-user.img.zip.md5; do
                 if gh release view "$tag" --json assets --jq '.assets[].name' | grep -Fxq "$asset"; then
                   gh release delete-asset "$tag" "$asset" --yes
-                  gh pr comment "$PR_NUMBER" --body "Removed older bundled seeded asset \`${asset}\` from \`${tag}\`; online installer assets remain available."
+                  gh pr comment "$PR_NUMBER" --body "Removed stale bundled seeded asset \`${asset}\` from \`${tag}\`; online installer assets remain available when present."
                 fi
               done
             done <<< "$release_tags"
           }
 
-          cleanup_previous_seeded_assets "$LATEST_VERSION"
+          cleanup_stale_seeded_assets "$LATEST_VERSION"
