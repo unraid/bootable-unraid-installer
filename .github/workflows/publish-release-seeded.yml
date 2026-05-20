@@ -191,3 +191,13 @@ jobs:
             release-assets/unraid-installer-*-bundled.img.zip
             release-assets/unraid-installer-*-bundled.img.zip.md5
           generate_release_notes: false
+
+      - name: Update release download options
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ./scripts/update-release-download-options.sh \
+            --release-tag "${{ steps.meta.outputs.release_tag }}" \
+            --release-version "${{ steps.meta.outputs.release_version }}"
