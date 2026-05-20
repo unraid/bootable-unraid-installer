@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -16,6 +17,7 @@ from pathlib import Path
 DEFAULT_METADATA_URL = "https://releases.unraid.net/usb-creator"
 DEFAULT_MIN_VERSION = "7.3.0"
 DEFAULT_LOCK_PATH = Path("build/unraid-release-lock.json")
+USER_AGENT = "unraid-installer-release-lock"
 
 
 def version_tuple(version: str) -> tuple[int, ...]:
@@ -61,7 +63,19 @@ def release_entries(metadata: dict) -> list[dict]:
     return entries
 
 
-def latest_release(metadata: dict, metadata_url: str, min_version: str) -> dict:
+def sha256_url(url: str) -> str:
+    digest = hashlib.sha256()
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(request, timeout=600) as response:
+        while True:
+            chunk = response.read(1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def latest_release(metadata: dict, metadata_url: str, min_version: str, verify_download: bool) -> dict:
     candidates = []
     minimum = version_tuple(min_version)
     for entry in release_entries(metadata):
@@ -76,7 +90,8 @@ def latest_release(metadata: dict, metadata_url: str, min_version: str) -> dict:
     if not candidates:
         raise RuntimeError(f"no Unraid ZIP releases found at or above {min_version}")
 
-    _version_key, entry, version, filename, sha256 = max(candidates, key=lambda item: item[0])
+    _version_key, entry, version, filename, url_sha256 = max(candidates, key=lambda item: item[0])
+    sha256 = sha256_url(entry["url"]) if verify_download else url_sha256
     return {
         "schema": 1,
         "source": {
@@ -90,13 +105,14 @@ def latest_release(metadata: dict, metadata_url: str, min_version: str) -> dict:
         "url": entry.get("url"),
         "filename": filename,
         "sha256": sha256,
+        "url_sha256": url_sha256,
         "image_download_size": entry.get("image_download_size"),
         "extract_size": entry.get("extract_size"),
     }
 
 
 def load_json_url(url: str) -> dict:
-    request = urllib.request.Request(url, headers={"User-Agent": "unraid-installer-release-lock"})
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(request, timeout=60) as response:
         return json.load(response)
 
@@ -110,14 +126,21 @@ def main() -> int:
     parser.add_argument("--metadata-url", default=DEFAULT_METADATA_URL)
     parser.add_argument("--min-version", default=DEFAULT_MIN_VERSION)
     parser.add_argument("--lock-path", type=Path, default=DEFAULT_LOCK_PATH)
+    parser.add_argument(
+        "--verify-download",
+        action="store_true",
+        help="Download the selected ZIP and pin its actual SHA256 instead of trusting the URL digest.",
+    )
     args = parser.parse_args()
 
     metadata = load_json_url(args.metadata_url)
-    lock = latest_release(metadata, args.metadata_url, args.min_version)
+    lock = latest_release(metadata, args.metadata_url, args.min_version, args.verify_download)
 
     existing = None
     if args.lock_path.exists():
         existing = json.loads(args.lock_path.read_text())
+        if not args.verify_download and existing.get("url") == lock.get("url"):
+            lock["sha256"] = existing.get("sha256") or lock["sha256"]
         if comparable(existing) == comparable(lock):
             print(f"Unraid release lock already current: {lock['version']}")
             return 0
