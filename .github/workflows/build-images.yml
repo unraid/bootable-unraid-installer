@@ -52,7 +52,9 @@ jobs:
       PUBLISH_DIR: ${{ github.workspace }}/artifacts/published
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        # actions/checkout v4, pinned to the tag target. Refresh with:
+        # git ls-remote https://github.com/actions/checkout.git refs/tags/v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           ref: ${{ github.ref_name }}
           fetch-depth: 1
@@ -71,7 +73,9 @@ jobs:
 
       - name: Restore build cache (kernel/ZFS/rootfs)
         id: restore-build-cache
-        uses: actions/cache/restore@v4
+        # actions/cache v4, pinned to the tag target. Refresh with:
+        # git ls-remote https://github.com/actions/cache.git refs/tags/v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: zfs-live-build
           key: install-build-v3-${{ runner.os }}-${{ hashFiles('build/version-lock.json') }}-run-${{ github.run_id }}
@@ -247,7 +251,9 @@ jobs:
 
       - name: Upload user ISO
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        # actions/upload-artifact v4, pinned to the tag target. Refresh with:
+        # git ls-remote https://github.com/actions/upload-artifact.git refs/tags/v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: install-user-iso-${{ github.run_number }}
           retention-days: 14
@@ -256,7 +262,7 @@ jobs:
 
       - name: Upload user IMG
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: install-user-img-${{ github.run_number }}
           retention-days: 14
@@ -265,7 +271,7 @@ jobs:
 
       - name: Upload user minimal IMG
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: install-user-minimal-img-${{ github.run_number }}
           retention-days: 14
@@ -274,7 +280,7 @@ jobs:
 
       - name: Upload user checksums
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: install-user-checksums-${{ github.run_number }}
           retention-days: 14
@@ -283,7 +289,7 @@ jobs:
 
       - name: Upload user published outputs
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: install-user-published-${{ github.run_number }}
           retention-days: 14
@@ -326,7 +332,7 @@ jobs:
 
       - name: Save build cache (kernel/ZFS/rootfs)
         if: ${{ always() && steps.cache-complete.outputs.ready == 'true' }}
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: zfs-live-build
           key: install-build-v3-${{ runner.os }}-${{ hashFiles('build/version-lock.json') }}-run-${{ github.run_id }}
