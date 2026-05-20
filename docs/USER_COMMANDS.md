@@ -22,14 +22,21 @@ Runner requirement:
 
 - GitHub-hosted runner: `ubuntu-24.04`
 
+Release artifact provenance:
+
+- `Build Install Images` does not restore `zfs-live-build/` from GitHub Actions cache.
+- ISO/IMG artifacts uploaded by that workflow are built from the checked-out source on a fresh runner.
+- Release publishing workflows download artifacts from an explicit `Build Install Images` run ID, then validate required filenames and generate release checksums.
+- `.github/workflows/prime-build-cache.yml` may still use caches for non-release cache warming and diagnostics.
+
 ### Run User Automation Build
 
 Use this for the standard automated media build.
 
-- Open GitHub Actions and select `Build Onboarding Images`.
-- Click `Run workflow` with these inputs: `profile=user`, `mode=full`, `menu_ui=gui`, `clean_build=false`, `force=true`, `publish=false`.
+- Open GitHub Actions and select `Build Install Images`.
+- Click `Run workflow` with these inputs: `persist_fs=vfat`, `menu_backend=auto`, `clean_build=false`, `force=true`, `publish=false`.
 - Start the run and wait for completion.
-- Download artifact `onboarding-user-images-<run_number>`.
+- Download the generated `install-user-*` artifacts for that run.
 
 Expected artifact contents:
 

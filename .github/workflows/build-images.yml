@@ -71,28 +71,13 @@ jobs:
           echo "---- scripts/build-install-images.sh (first 40 lines) ----"
           sed -n '1,40p' ./scripts/build-install-images.sh
 
-      - name: Restore build cache (kernel/ZFS/rootfs)
-        id: restore-build-cache
-        # actions/cache v4, pinned to the tag target. Refresh with:
-        # git ls-remote https://github.com/actions/cache.git refs/tags/v4
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: zfs-live-build
-          key: install-build-v3-${{ runner.os }}-${{ hashFiles('build/version-lock.json') }}-run-${{ github.run_id }}
-          restore-keys: |
-            install-build-v3-${{ runner.os }}-${{ hashFiles('build/version-lock.json') }}-
-
-      - name: Cache diagnostics
+      - name: Release artifact provenance
         shell: bash
         run: |
           set -euo pipefail
-          echo "cache-hit=${{ steps.restore-build-cache.outputs.cache-hit }}"
-          if [[ -d zfs-live-build ]]; then
-            echo "Existing kernel/zfs stamp files after restore:"
-            find zfs-live-build -maxdepth 1 -type f -name '.*-build-*.stamp' -print | sort || true
-          else
-            echo "No zfs-live-build directory restored."
-          fi
+          echo "Build Install Images intentionally does not restore zfs-live-build from GitHub Actions cache."
+          echo "Artifacts uploaded by this workflow are built from the checked-out source on a fresh runner."
+          echo "Use prime-build-cache.yml only for non-release cache warming and diagnostics."
 
       - name: Install build dependencies
         shell: bash
@@ -295,44 +280,3 @@ jobs:
           retention-days: 14
           path: artifacts/published/*
           if-no-files-found: warn
-
-      - name: Validate cache completeness
-        if: always()
-        id: cache-complete
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          kernel_stamp_count=0
-          zfs_stamp_count=0
-          if [[ -d zfs-live-build ]]; then
-            kernel_stamp_count="$(find zfs-live-build -maxdepth 1 -type f -name '.*kernel-build-*.stamp' | wc -l | tr -d '[:space:]')"
-            zfs_stamp_count="$(find zfs-live-build -maxdepth 1 -type f -name '.*zfs-build-*.stamp' | wc -l | tr -d '[:space:]')"
-          fi
-
-          echo "kernel_stamp_count=$kernel_stamp_count"
-          echo "zfs_stamp_count=$zfs_stamp_count"
-
-          if [[ "$kernel_stamp_count" != "0" && "$zfs_stamp_count" != "0" ]]; then
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "Skipping cache save because cache content is incomplete (missing kernel or zfs build stamp)."
-          fi
-
-      - name: Prune rootfs from cache payload
-        if: ${{ always() && steps.cache-complete.outputs.ready == 'true' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if [[ -d zfs-live-build/rootfs ]]; then
-            sudo rm -rf zfs-live-build/rootfs
-          fi
-
-      - name: Save build cache (kernel/ZFS/rootfs)
-        if: ${{ always() && steps.cache-complete.outputs.ready == 'true' }}
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: zfs-live-build
-          key: install-build-v3-${{ runner.os }}-${{ hashFiles('build/version-lock.json') }}-run-${{ github.run_id }}
