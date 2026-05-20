@@ -9,7 +9,7 @@ on:
         default: "latest"
         type: string
       release_tag:
-        description: "Release tag to create/update (example: install-user-v2026.04.27)"
+        description: "Release tag to create/update (example: Installer-7.3.0)"
         required: true
         type: string
       release_name:
@@ -117,8 +117,13 @@ jobs:
             release_name="$release_tag"
           fi
 
+          release_version="${release_tag#Installer-}"
+          release_version="$(tr -cs '[:alnum:]._' '-' <<< "$release_version" | sed 's/^-//; s/-$//')"
+          [[ -n "$release_version" ]] || release_version="$release_tag"
+
           echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
           echo "release_name=$release_name" >> "$GITHUB_OUTPUT"
+          echo "release_version=$release_version" >> "$GITHUB_OUTPUT"
 
       - name: Download ISO artifact from source run
         # actions/download-artifact v4, pinned to the tag target. Refresh with:
@@ -157,21 +162,35 @@ jobs:
           echo "Release assets ready:"
           ls -lh release-assets
 
-      - name: Compress online IMG for release
+      - name: Prepare versioned online release assets
         shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.meta.outputs.release_version }}
         run: |
           set -euo pipefail
-          echo "Compressing online installer image install-user-minimal.img..."
-          zip -9 -j release-assets/install-user-minimal.img.zip release-assets/install-user-minimal.img
+
+          iso_asset="unraid-installer-${RELEASE_VERSION}-online.iso"
+          img_asset="unraid-installer-${RELEASE_VERSION}-online.img.zip"
+
+          mv release-assets/install-user.iso "release-assets/${iso_asset}"
+
+          echo "Compressing online installer image as ${img_asset}..."
+          zip -9 -j "release-assets/${img_asset}" release-assets/install-user-minimal.img
+          rm -f release-assets/install-user-minimal.img
+
           echo "Compressed sizes:"
-          ls -lh release-assets/install-user-minimal.img.zip
+          ls -lh "release-assets/${iso_asset}" "release-assets/${img_asset}"
 
       - name: Generate per-file MD5 checksums
         shell: bash
         run: |
           set -euo pipefail
-          md5sum release-assets/install-user.iso | awk '{print $1}' > release-assets/install-user.iso.md5
-          md5sum release-assets/install-user-minimal.img.zip | awk '{print $1}' > release-assets/install-user-minimal.img.zip.md5
+          shopt -s nullglob
+
+          for asset in release-assets/unraid-installer-*.iso release-assets/unraid-installer-*.img.zip; do
+            md5sum "$asset" | awk '{print $1}' > "${asset}.md5"
+          done
+
           ls -lh release-assets/*.md5
 
       - name: Create or update GitHub release
@@ -185,8 +204,8 @@ jobs:
           prerelease: ${{ inputs.prerelease }}
           overwrite_files: true
           files: |
-            release-assets/install-user.iso
-            release-assets/install-user-minimal.img.zip
-            release-assets/install-user.iso.md5
-            release-assets/install-user-minimal.img.zip.md5
+            release-assets/unraid-installer-*.iso
+            release-assets/unraid-installer-*.img.zip
+            release-assets/unraid-installer-*.iso.md5
+            release-assets/unraid-installer-*.img.zip.md5
           generate_release_notes: false

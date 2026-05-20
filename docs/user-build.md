@@ -53,6 +53,13 @@ latest stable seeded image is published, older or non-stable `Installer-*`
 releases keep their online installer assets when present but have bundled seeded
 IMG assets removed.
 
+Public release assets are renamed from the internal build artifact names to
+versioned Unraid installer download names at publish time:
+
+- `unraid-installer-<version>-online.iso`
+- `unraid-installer-<version>-online.img.zip`
+- `unraid-installer-<version>-bundled.img.zip`
+
 ## Runtime Menu Behavior
 
 Built user runtime launches via `/boot/install/menu.sh`.

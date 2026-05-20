@@ -9,7 +9,7 @@ on:
         default: "latest"
         type: string
       release_tag:
-        description: "Release tag to create/update (example: install-user-seeded-v2026.04.27)"
+        description: "Release tag to create/update (example: Installer-7.3.0)"
         required: true
         type: string
       release_name:
@@ -115,8 +115,13 @@ jobs:
             release_name="$release_tag"
           fi
 
+          release_version="${release_tag#Installer-}"
+          release_version="$(tr -cs '[:alnum:]._' '-' <<< "$release_version" | sed 's/^-//; s/-$//')"
+          [[ -n "$release_version" ]] || release_version="$release_tag"
+
           echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
           echo "release_name=$release_name" >> "$GITHUB_OUTPUT"
+          echo "release_version=$release_version" >> "$GITHUB_OUTPUT"
 
       - name: Download IMG artifact from source run
         # actions/download-artifact v4, pinned to the tag target. Refresh with:
@@ -145,20 +150,28 @@ jobs:
           echo "Release assets ready:"
           ls -lh release-assets
 
-      - name: Compress seeded IMG for release
+      - name: Prepare versioned bundled IMG for release
         shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.meta.outputs.release_version }}
         run: |
           set -euo pipefail
-          echo "Compressing install-user.img..."
-          zip -9 -j release-assets/install-user.img.zip release-assets/install-user.img
+          img_asset="unraid-installer-${RELEASE_VERSION}-bundled.img.zip"
+
+          echo "Compressing bundled installer image as ${img_asset}..."
+          zip -9 -j "release-assets/${img_asset}" release-assets/install-user.img
+          rm -f release-assets/install-user.img
+
           echo "Compressed sizes:"
-          ls -lh release-assets/install-user.img.zip
+          ls -lh "release-assets/${img_asset}"
 
       - name: Generate per-file MD5 checksums
         shell: bash
         run: |
           set -euo pipefail
-          md5sum release-assets/install-user.img.zip | awk '{print $1}' > release-assets/install-user.img.zip.md5
+          for asset in release-assets/unraid-installer-*-bundled.img.zip; do
+            md5sum "$asset" | awk '{print $1}' > "${asset}.md5"
+          done
           ls -lh release-assets/*.md5
 
       - name: Create or update GitHub release
@@ -172,6 +185,6 @@ jobs:
           prerelease: ${{ inputs.prerelease }}
           overwrite_files: true
           files: |
-            release-assets/install-user.img.zip
-            release-assets/install-user.img.zip.md5
+            release-assets/unraid-installer-*-bundled.img.zip
+            release-assets/unraid-installer-*-bundled.img.zip.md5
           generate_release_notes: false
