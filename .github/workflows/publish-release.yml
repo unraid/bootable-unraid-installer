@@ -1,4 +1,4 @@
-name: Publish Minimal Install Release
+name: Publish Online Install Release
 
 on:
   workflow_dispatch:
@@ -34,7 +34,7 @@ permissions:
 
 jobs:
   publish-release:
-    name: Publish minimal release assets
+    name: Publish online release assets
     runs-on: ubuntu-24.04
 
     steps:
@@ -131,7 +131,7 @@ jobs:
           merge-multiple: true
           path: release-assets
 
-      - name: Download minimal IMG artifact from source run
+      - name: Download online IMG artifact from source run
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           github-token: ${{ github.token }}
@@ -157,11 +157,11 @@ jobs:
           echo "Release assets ready:"
           ls -lh release-assets
 
-      - name: Compress minimal IMG for release
+      - name: Compress online IMG for release
         shell: bash
         run: |
           set -euo pipefail
-          echo "Compressing install-user-minimal.img..."
+          echo "Compressing online installer image install-user-minimal.img..."
           zip -9 -j release-assets/install-user-minimal.img.zip release-assets/install-user-minimal.img
           echo "Compressed sizes:"
           ls -lh release-assets/install-user-minimal.img.zip

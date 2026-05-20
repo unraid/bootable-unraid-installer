@@ -44,7 +44,7 @@ Expected artifact contents:
 
 - `install-user.iso`
 - `install-user.img`
-- `install-user-minimal.img` (if built)
+- `install-user-minimal.img` online installer image (if built)
 - `checksums.sha256`
 
 ## Core Build Scripts
@@ -81,13 +81,13 @@ Outputs in repo:
 
 - `zfs-live-build/install-user.iso`
 - `zfs-live-build/install-user.img`
-- `zfs-live-build/install-user-minimal.img`
+- `zfs-live-build/install-user-minimal.img` online installer image
 
 Published outputs:
 
 - `artifacts/published/install-user.iso`
 - `artifacts/published/install-user.img`
-- `artifacts/published/install-user-minimal.img`
+- `artifacts/published/install-user-minimal.img` online installer image
 
 ### `build-iso.sh`
 
