@@ -1,0 +1,43 @@
+name: ShellCheck
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shellcheck:
+    name: ShellCheck scripts
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout repository
+        # actions/checkout v4, pinned to the tag target so this workflow does not add a mutable release action.
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 1
+
+      - name: Install ShellCheck
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends shellcheck
+          shellcheck --version
+
+      - name: Run ShellCheck
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mapfile -t scripts < <(git ls-files 'scripts/*.sh')
+          if [[ "${#scripts[@]}" -eq 0 ]]; then
+            echo "No shell scripts found."
+            exit 0
+          fi
+
+          printf 'Checking %s shell script(s):\n' "${#scripts[@]}"
+          printf ' - %s\n' "${scripts[@]}"
+          shellcheck "${scripts[@]}"

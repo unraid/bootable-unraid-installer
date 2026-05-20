@@ -58,14 +58,15 @@ ui_set_dims() {
     local default_2="$3"
     local default_3="${4:-}"
     local dims
+    local dim_1 dim_2 dim_3
 
     dims="$(ui_calc_dims "$kind" 2>/dev/null || true)"
-    set -- $dims
+    read -r dim_1 dim_2 dim_3 <<< "$dims"
 
-    UI_DIM_1="${1:-$default_1}"
-    UI_DIM_2="${2:-$default_2}"
+    UI_DIM_1="${dim_1:-$default_1}"
+    UI_DIM_2="${dim_2:-$default_2}"
     if [[ -n "$default_3" ]]; then
-        UI_DIM_3="${3:-$default_3}"
+        UI_DIM_3="${dim_3:-$default_3}"
     fi
 }
 
@@ -291,8 +292,12 @@ do_poweroff() {
     [ -x /sbin/halt ] && exec /sbin/halt -f
     command -v busybox >/dev/null 2>&1 && exec busybox poweroff -f
 
-    [ -w /proc/sys/kernel/sysrq ] && echo 1 > /proc/sys/kernel/sysrq || true
-    [ -w /proc/sysrq-trigger ] && echo o > /proc/sysrq-trigger || true
+    if [ -w /proc/sys/kernel/sysrq ]; then
+        echo 1 > /proc/sys/kernel/sysrq || true
+    fi
+    if [ -w /proc/sysrq-trigger ]; then
+        echo o > /proc/sysrq-trigger || true
+    fi
 
     ui_msg "Power Off" "Unable to power off automatically on this runtime."
     return 1
@@ -307,8 +312,12 @@ do_reboot() {
     [ -x /sbin/shutdown ] && exec /sbin/shutdown -r now
     command -v busybox >/dev/null 2>&1 && exec busybox reboot -f
 
-    [ -w /proc/sys/kernel/sysrq ] && echo 1 > /proc/sys/kernel/sysrq || true
-    [ -w /proc/sysrq-trigger ] && echo b > /proc/sysrq-trigger || true
+    if [ -w /proc/sys/kernel/sysrq ]; then
+        echo 1 > /proc/sys/kernel/sysrq || true
+    fi
+    if [ -w /proc/sysrq-trigger ]; then
+        echo b > /proc/sysrq-trigger || true
+    fi
 
     ui_msg "Reboot" "Unable to reboot automatically on this runtime."
     return 1
