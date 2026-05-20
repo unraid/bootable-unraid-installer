@@ -31,7 +31,8 @@ Release artifact provenance:
 - `.github/workflows/prime-build-cache.yml` refreshes the kernel/OpenZFS cache used by release builds.
 - Seeded IMG builds bundle the pinned stable Unraid OS release from `build/unraid-release-lock.json`; redistribution is approved because this repository publishes an official alternative Unraid install method.
 - `.github/workflows/update-unraid-release-lock.yml` checks for new stable Unraid OS releases and opens/updates a PR when the pinned release lock changes.
-- After publishing the latest stable seeded image, the release-lock workflow removes bundled `install-user.img.zip` assets from older or non-stable `Installer-*` releases. Those releases keep their online installer assets when present.
+- Public release downloads are named by installer version and install path: `unraid-installer-<version>-online.iso`, `unraid-installer-<version>-online.img.zip`, and `unraid-installer-<version>-bundled.img.zip`.
+- After publishing the latest stable bundled image, the release-lock workflow removes bundled IMG assets from older or non-stable `Installer-*` releases. Those releases keep their online installer assets when present.
 
 ### Run User Automation Build
 
@@ -48,6 +49,12 @@ Expected artifact contents:
 - `install-user.img`
 - `install-user-minimal.img` online installer image (if built)
 - `checksums.sha256`
+
+Public release asset names for `Installer-7.3.0`:
+
+- `unraid-installer-7.3.0-online.iso`
+- `unraid-installer-7.3.0-online.img.zip`
+- `unraid-installer-7.3.0-bundled.img.zip`
 
 ## Core Build Scripts
 

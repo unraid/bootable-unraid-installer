@@ -294,12 +294,14 @@ jobs:
           )"
               [[ "$should_cleanup" == "true" ]] || continue
 
-              for asset in install-user.img.zip install-user.img.zip.md5; do
-                if gh release view "$tag" --json assets --jq '.assets[].name' | grep -Fxq "$asset"; then
-                  gh release delete-asset "$tag" "$asset" --yes
-                  gh pr comment "$PR_NUMBER" --body "Removed stale bundled seeded asset \`${asset}\` from \`${tag}\`; online installer assets remain available when present."
-                fi
-              done
+              while IFS= read -r asset; do
+                case "$asset" in
+                  install-user.img.zip|install-user.img.zip.md5|unraid-installer-*-bundled.img.zip|unraid-installer-*-bundled.img.zip.md5)
+                    gh release delete-asset "$tag" "$asset" --yes
+                    gh pr comment "$PR_NUMBER" --body "Removed stale bundled seeded asset \`${asset}\` from \`${tag}\`; online installer assets remain available when present."
+                    ;;
+                esac
+              done < <(gh release view "$tag" --json assets --jq '.assets[].name')
             done <<< "$release_tags"
           }
 
