@@ -17,6 +17,7 @@ from pathlib import Path
 DEFAULT_METADATA_URL = "https://releases.unraid.net/usb-creator"
 DEFAULT_MIN_VERSION = "7.3.0"
 DEFAULT_LOCK_PATH = Path("build/unraid-release-lock.json")
+DEFAULT_CHANNEL = "stable"
 USER_AGENT = "unraid-installer-release-lock"
 
 
@@ -31,13 +32,15 @@ def find_version(name: str) -> str | None:
     return match.group(1)
 
 
-def validate_release_url(url: str, version: str) -> tuple[str, str]:
+def validate_release_url(url: str, version: str, channel: str) -> tuple[str, str]:
     parsed = urllib.parse.urlsplit(url)
     if parsed.scheme != "https" or parsed.netloc != "releases.unraid.net":
         raise ValueError(f"unsupported release URL host or scheme: {url}")
     path_parts = [part for part in parsed.path.split("/") if part]
     if len(path_parts) < 5 or path_parts[0] != "dl":
         raise ValueError(f"unsupported release URL path: {url}")
+    if path_parts[1] != channel:
+        raise ValueError(f"release URL channel is {path_parts[1]}, expected {channel}: {url}")
 
     digest = path_parts[-2]
     filename = path_parts[-1]
@@ -75,7 +78,13 @@ def sha256_url(url: str) -> str:
     return digest.hexdigest()
 
 
-def latest_release(metadata: dict, metadata_url: str, min_version: str, verify_download: bool) -> dict:
+def latest_release(
+    metadata: dict,
+    metadata_url: str,
+    min_version: str,
+    channel: str,
+    verify_download: bool,
+) -> dict:
     candidates = []
     minimum = version_tuple(min_version)
     for entry in release_entries(metadata):
@@ -84,11 +93,14 @@ def latest_release(metadata: dict, metadata_url: str, min_version: str, verify_d
         version = find_version(name)
         if not version or version_tuple(version) < minimum or ".zip" not in url:
             continue
-        filename, sha256 = validate_release_url(url, version)
+        try:
+            filename, sha256 = validate_release_url(url, version, channel)
+        except ValueError:
+            continue
         candidates.append((version_tuple(version), entry, version, filename, sha256))
 
     if not candidates:
-        raise RuntimeError(f"no Unraid ZIP releases found at or above {min_version}")
+        raise RuntimeError(f"no {channel} Unraid ZIP releases found at or above {min_version}")
 
     _version_key, entry, version, filename, url_sha256 = max(candidates, key=lambda item: item[0])
     sha256 = sha256_url(entry["url"]) if verify_download else url_sha256
@@ -97,7 +109,9 @@ def latest_release(metadata: dict, metadata_url: str, min_version: str, verify_d
         "source": {
             "metadata_url": metadata_url,
             "minimum_version": min_version,
+            "channel": channel,
         },
+        "channel": channel,
         "name": entry.get("name") or f"Unraid {version}",
         "version": version,
         "release_date": entry.get("release_date") or "",
@@ -125,6 +139,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--metadata-url", default=DEFAULT_METADATA_URL)
     parser.add_argument("--min-version", default=DEFAULT_MIN_VERSION)
+    parser.add_argument("--channel", default=DEFAULT_CHANNEL, choices=("stable",))
     parser.add_argument("--lock-path", type=Path, default=DEFAULT_LOCK_PATH)
     parser.add_argument(
         "--verify-download",
@@ -134,7 +149,13 @@ def main() -> int:
     args = parser.parse_args()
 
     metadata = load_json_url(args.metadata_url)
-    lock = latest_release(metadata, args.metadata_url, args.min_version, args.verify_download)
+    lock = latest_release(
+        metadata,
+        args.metadata_url,
+        args.min_version,
+        args.channel,
+        args.verify_download,
+    )
 
     existing = None
     if args.lock_path.exists():
