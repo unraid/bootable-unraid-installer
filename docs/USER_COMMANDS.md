@@ -28,6 +28,8 @@ Release artifact provenance:
 - ISO/IMG artifacts uploaded by that workflow are built from the checked-out source on a fresh runner.
 - Release publishing workflows download artifacts from an explicit `Build Install Images` run ID, then validate required filenames and generate release checksums.
 - `.github/workflows/prime-build-cache.yml` may still use caches for non-release cache warming and diagnostics.
+- Seeded IMG builds bundle the pinned Unraid OS release from `build/unraid-release-lock.json`; redistribution is approved because this repository publishes an official alternative Unraid install method.
+- `.github/workflows/update-unraid-release-lock.yml` checks for new Unraid OS releases and opens/updates a PR when the pinned release lock changes.
 
 ### Run User Automation Build
 
@@ -124,6 +126,7 @@ PUBLISH_ISO=./zfs-live-build/install-user.iso ./scripts/build-iso.sh grub-iso --
 Purpose:
 
 - Create a native GPT USB image from an ISO with optional persistence partition.
+- Seed the pinned Unraid OS ZIP from `build/unraid-release-lock.json` when persistence is enabled.
 
 Usage:
 

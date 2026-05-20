@@ -26,6 +26,7 @@ Options:
   --persist-fs ext4|exfat|fat32|vfat  Persistence filesystem (default: ext4)
   --no-persist             Do not create persistence partition (3-partition image)
   --seed-dir PATH          Seed directory (default: <repo>/persistent)
+  --unraid-release-lock PATH  Seeded Unraid release lock file (default: build/unraid-release-lock.json)
   --tmp-dir PATH           Temp working directory (default: <output-dir>/.tmp-build-usb-native)
   --force                  Overwrite output image if it exists
   -h, --help               Show help
@@ -187,6 +188,7 @@ PERSIST_LABEL="INSTALL-PERSIST"
 PERSIST_VFAT_LABEL="INSTALLPERS"
 SEED_DIR=""
 SEED_DIR_DEFAULT="$REPO_ROOT/persistent"
+UNRAID_RELEASE_LOCK_FILE="${UNRAID_RELEASE_LOCK_FILE:-$REPO_ROOT/build/unraid-release-lock.json}"
 INSTALL_PROFILE="user"
 PERSIST_AUTOEXPAND=0
 NO_PERSIST=0
@@ -248,6 +250,11 @@ while (($#)); do
       SEED_DIR="$2"
       shift 2
       ;;
+    --unraid-release-lock)
+      [[ $# -ge 2 ]] || { echo "Missing value for --unraid-release-lock" >&2; exit 1; }
+      UNRAID_RELEASE_LOCK_FILE="$2"
+      shift 2
+      ;;
     --tmp-dir)
       [[ $# -ge 2 ]] || { echo "Missing value for --tmp-dir" >&2; exit 1; }
       TMP_BASE="$2"
@@ -303,6 +310,36 @@ fi
 [[ -d "$SEED_DIR" ]] || { echo "Seed directory not found: $SEED_DIR" >&2; exit 1; }
 
 echo "Resolved seed directory: $SEED_DIR"
+echo "Unraid release lock: $UNRAID_RELEASE_LOCK_FILE"
+
+read_unraid_release_lock() {
+  local lock_file="$1"
+
+  python3 - "$lock_file" <<'PY'
+import json
+import re
+import sys
+import urllib.parse
+from pathlib import Path
+
+path = Path(sys.argv[1])
+if not path.is_file():
+    raise SystemExit(f"Unraid release lock not found: {path}")
+lock = json.loads(path.read_text())
+required = ["name", "version", "url", "filename", "sha256"]
+missing = [key for key in required if not lock.get(key)]
+if missing:
+    raise SystemExit(f"Unraid release lock missing required fields: {', '.join(missing)}")
+parsed = urllib.parse.urlsplit(lock["url"])
+if parsed.scheme != "https" or parsed.netloc != "releases.unraid.net":
+    raise SystemExit("Unraid release lock URL must use https://releases.unraid.net")
+if not re.fullmatch(r"[0-9a-f]{64}", lock["sha256"]):
+    raise SystemExit("Unraid release lock sha256 must be 64 lowercase hex characters")
+if lock["sha256"] not in parsed.path:
+    raise SystemExit("Unraid release lock sha256 must match the release URL path digest")
+print("\t".join([lock["name"], lock["version"], lock["url"], lock["filename"], lock["sha256"]]))
+PY
+}
 
 if [[ "$NO_PERSIST" -eq 1 ]]; then
   seed_bytes=0
@@ -647,11 +684,39 @@ elif [[ ! -f "$SCRIPT_DIR/zip.sh" ]]; then
   echo "Skipping build-time zip download: missing script $SCRIPT_DIR/zip.sh"
 else
   sudo mkdir -p "$MNT_PERSIST/zips"
-  echo "Downloading latest Unraid 7.3+ zip into persistence (build-time)..."
-  if ! sudo /bin/bash "$SCRIPT_DIR/zip.sh" --latest --non-interactive --ui text --zip-dir "$MNT_PERSIST/zips"; then
-    echo "Failed to download latest Unraid zip during build-time seeding." >&2
+  release_lock_line="$(read_unraid_release_lock "$UNRAID_RELEASE_LOCK_FILE")"
+  IFS=$'\t' read -r unraid_release_name unraid_release_version unraid_release_url unraid_release_filename unraid_release_sha256 <<< "$release_lock_line"
+  echo "Downloading pinned Unraid ${unraid_release_version} zip into persistence (build-time): ${unraid_release_filename}"
+  if ! sudo /bin/bash "$SCRIPT_DIR/zip.sh" \
+    --release-url "$unraid_release_url" \
+    --release-name "$unraid_release_name" \
+    --expected-sha256 "$unraid_release_sha256" \
+    --non-interactive \
+    --ui text \
+    --zip-dir "$MNT_PERSIST/zips"; then
+    echo "Failed to download pinned Unraid zip during build-time seeding." >&2
     exit 1
   fi
+
+  sudo mkdir -p "$MNT_PERSIST/logs"
+  provenance_tmp="$(mktemp)"
+  python3 - "$UNRAID_RELEASE_LOCK_FILE" "$provenance_tmp" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+lock = json.loads(Path(sys.argv[1]).read_text())
+provenance = {
+    "schema": 1,
+    "kind": "seeded-unraid-release",
+    "redistribution": "approved",
+    "approval_note": "Official Unraid installer image may bundle Unraid OS as an alternative install method.",
+    "release": lock,
+}
+Path(sys.argv[2]).write_text(json.dumps(provenance, indent=2) + "\n")
+PY
+  sudo cp "$provenance_tmp" "$MNT_PERSIST/logs/seeded-unraid-release.json"
+  rm -f "$provenance_tmp"
 
   zip_count="$(find "$MNT_PERSIST/zips" -maxdepth 1 -type f -iname '*.zip' | wc -l | tr -d '[:space:]')"
   if [[ "$zip_count" == "0" ]]; then
