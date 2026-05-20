@@ -189,4 +189,4 @@ jobs:
             release-assets/install-user-minimal.img.zip
             release-assets/install-user.iso.md5
             release-assets/install-user-minimal.img.zip.md5
-          generate_release_notes: true
+          generate_release_notes: false
