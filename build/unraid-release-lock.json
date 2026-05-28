@@ -6,15 +6,15 @@
     "channel": "stable"
   },
   "channel": "stable",
-  "name": "Unraid 7.3.0",
-  "version": "7.3.0",
-  "release_date": "2026-05-12",
-  "website": "https://docs.unraid.net/unraid-os/release-notes/7.3.0/",
-  "url": "https://releases.unraid.net/dl/stable/7.3.0/56144fb963526391630f54b842b30727b159e1bc0375142e34f265daa29d49f7/unRAIDServer-7.3.0-x86_64.zip?utm_source=usb_creator&utm_medium=app",
-  "filename": "unRAIDServer-7.3.0-x86_64.zip",
-  "sha256": "6d09ce4ba0894b9f77c220ca37c97ed5a031d9fb3ef4c43ecd8b7485c11ed870",
-  "url_sha256": "56144fb963526391630f54b842b30727b159e1bc0375142e34f265daa29d49f7",
-  "image_download_size": 1181246664,
-  "extract_size": 1181238698,
-  "updated_at": "2026-05-20T15:31:06+00:00"
+  "name": "Unraid 7.3.1",
+  "version": "7.3.1",
+  "release_date": "2026-05-27",
+  "website": "https://docs.unraid.net/unraid-os/release-notes/7.3.1/",
+  "url": "https://releases.unraid.net/dl/stable/7.3.1/1129837456f70149ff0fe9970b087083bb1f95aa3de3e4a85cfde375cde2e7cd/unRAIDServer-7.3.1-x86_64.zip?utm_source=usb_creator&utm_medium=app",
+  "filename": "unRAIDServer-7.3.1-x86_64.zip",
+  "sha256": "a4217f4d69aed8e54756238a4ef1e67a927f9c662f77d5da0604ffc7fc59eadf",
+  "url_sha256": "1129837456f70149ff0fe9970b087083bb1f95aa3de3e4a85cfde375cde2e7cd",
+  "image_download_size": 1182431225,
+  "extract_size": 1182423259,
+  "updated_at": "2026-05-28T01:16:28+00:00"
 }
