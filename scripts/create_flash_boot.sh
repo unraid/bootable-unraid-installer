@@ -391,7 +391,9 @@ if [[ -f "$VERSION_CHECK_LIB" ]]; then
     # shellcheck disable=SC1090
     . "$VERSION_CHECK_LIB"
     zip_warning="$(zip_update_warning "$ZIP_FILE" 2>/dev/null || true)"
-    [[ -n "$zip_warning" ]] && ui_msg "ZIP Update Available" "$zip_warning"
+    if [[ -n "$zip_warning" ]]; then
+        ui_msg "ZIP Update Available" "$zip_warning"
+    fi
 fi
 
 if [[ -n "$TARGET_DISK_ARG" ]]; then

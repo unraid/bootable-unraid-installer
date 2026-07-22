@@ -34,7 +34,11 @@ show_installer_update_warning() {
     [[ "$INSTALLER_UPDATE_WARNING_SHOWN" -eq 0 ]] || return 0
     INSTALLER_UPDATE_WARNING_SHOWN=1
     warning="$(installer_update_warning 2>/dev/null || true)"
-    [[ -n "$warning" ]] && ui_msg "Installer Update Available" "$warning"
+    if [[ -n "$warning" ]]; then
+        ui_msg "Installer Update Available" "$warning"
+    fi
+
+    return 0
 }
 
 set_internal_boot_size() {
