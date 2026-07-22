@@ -35,7 +35,7 @@ show_installer_update_warning() {
     INSTALLER_UPDATE_WARNING_SHOWN=1
     warning="$(installer_update_warning 2>/dev/null || true)"
     if [[ -n "$warning" ]]; then
-        ui_msg "Installer Update Available" "$warning"
+        ui_msg "Installer Update Available" "$warning" || true
     fi
 
     return 0

@@ -392,7 +392,7 @@ if [[ -f "$VERSION_CHECK_LIB" ]]; then
     . "$VERSION_CHECK_LIB"
     zip_warning="$(zip_update_warning "$ZIP_FILE" 2>/dev/null || true)"
     if [[ -n "$zip_warning" ]]; then
-        ui_msg "ZIP Update Available" "$zip_warning"
+        ui_msg "ZIP Update Available" "$zip_warning" || true
     fi
 fi
 
