@@ -27,6 +27,8 @@ latest_installer_version() {
     local metadata
     metadata="$(mktemp)" || return 1
     version_check_download "$INSTALLER_RELEASES_URL" "$metadata" || { rm -f "$metadata"; return 1; }
+    # The PHP snippet is intentionally single-quoted so the shell does not expand PHP variables.
+    # shellcheck disable=SC2016
     php -r '
         $releases = json_decode(file_get_contents($argv[1]), true);
         if (!is_array($releases)) exit(1);
@@ -56,6 +58,8 @@ latest_unraid_zip_version() {
     local metadata
     metadata="$(mktemp)" || return 1
     version_check_download "$UNRAID_RELEASES_URL" "$metadata" || { rm -f "$metadata"; return 1; }
+    # The PHP snippet is intentionally single-quoted so the shell does not expand PHP variables.
+    # shellcheck disable=SC2016
     php -r '
         $json = json_decode(file_get_contents($argv[1]), true);
         if (!is_array($json)) exit(1);
@@ -82,6 +86,7 @@ installer_update_warning() {
     local current latest
     current="$(installer_current_version)" || return 0
     latest="$(latest_installer_version)" || return 0
+    # shellcheck disable=SC2016
     if php -r 'exit(version_compare($argv[1], $argv[2], "<") ? 0 : 1);' "$current" "$latest"; then
         printf 'A newer Unraid ISO Installer is available (%s). This media is version %s. Download the latest installer before continuing.\n' "$latest" "$current"
     fi
@@ -91,6 +96,7 @@ zip_update_warning() {
     local zip_file="$1" current latest
     current="$(selected_zip_version "$zip_file")" || return 0
     latest="$(latest_unraid_zip_version)" || return 0
+    # shellcheck disable=SC2016
     if php -r 'exit(version_compare($argv[1], $argv[2], "<") ? 0 : 1);' "$current" "$latest"; then
         printf 'The selected Unraid ZIP is version %s, but version %s is available. Download the latest ZIP before creating boot media.\n' "$current" "$latest"
     fi
