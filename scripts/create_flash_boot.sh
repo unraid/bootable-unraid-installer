@@ -386,6 +386,14 @@ fi
 status_msg "Flash boot image tool"
 status_msg "Using zip file: $ZIP_FILE"
 
+VERSION_CHECK_LIB="${VERSION_CHECK_LIB:-/boot/install/version_check.sh}"
+if [[ -f "$VERSION_CHECK_LIB" ]]; then
+    # shellcheck disable=SC1090
+    . "$VERSION_CHECK_LIB"
+    zip_warning="$(zip_update_warning "$ZIP_FILE" 2>/dev/null || true)"
+    [[ -n "$zip_warning" ]] && ui_msg "ZIP Update Available" "$zip_warning"
+fi
+
 if [[ -n "$TARGET_DISK_ARG" ]]; then
     TARGET_DISK="$TARGET_DISK_ARG"
 else
