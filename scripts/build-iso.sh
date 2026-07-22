@@ -2155,6 +2155,7 @@ persistent_override_sha256() {
 apply_persistent_install_overrides() {
  local override_root=""
  local file_name=""
+ local destination_name=""
  local override_found=0
  local override_sha256=""
 
@@ -2177,6 +2178,7 @@ apply_persistent_install_overrides() {
     menu_gui.sh \
     create_internal_boot.sh \
     create_flash_boot.sh \
+    partner/release_pending_provision.sh \
     zip.sh; do
     if [ -f "$override_root/$file_name" ]; then
       override_found=1
@@ -2199,19 +2201,21 @@ apply_persistent_install_overrides() {
     menu_gui.sh \
     create_internal_boot.sh \
     create_flash_boot.sh \
+    partner/release_pending_provision.sh \
     zip.sh; do
     if [ -f "$override_root/$file_name" ]; then
       override_sha256="$(persistent_override_sha256 "$override_root/$file_name")"
-      cp -f "$override_root/$file_name" "$ONBOARDING_DIR/$file_name"
-      case "$file_name" in
-            install-profile)
-          chmod 0644 "$ONBOARDING_DIR/$file_name" 2>/dev/null || true
+      destination_name="${file_name##*/}"
+      cp -f "$override_root/$file_name" "$ONBOARDING_DIR/$destination_name"
+      case "$destination_name" in
+        install-profile)
+          chmod 0644 "$ONBOARDING_DIR/$destination_name" 2>/dev/null || true
           ;;
         *)
-          chmod +x "$ONBOARDING_DIR/$file_name" 2>/dev/null || true
+          chmod +x "$ONBOARDING_DIR/$destination_name" 2>/dev/null || true
           ;;
       esac
-         boot_log "applied persistent install override: $file_name sha256=$override_sha256"
+      boot_log "applied persistent install override: $file_name -> $destination_name sha256=$override_sha256"
     fi
  done
 
