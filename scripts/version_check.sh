@@ -88,7 +88,7 @@ installer_update_warning() {
     latest="$(latest_installer_version)" || return 0
     # shellcheck disable=SC2016
     if php -r 'exit(version_compare($argv[1], $argv[2], "<") ? 0 : 1);' "$current" "$latest"; then
-        printf 'A newer Unraid ISO Installer is available (%s). This media is version %s. You can continue, but using the latest installer is recommended.\n' "$latest" "$current"
+        printf 'A newer Unraid ISO Installer is available (%s). This media is version %s.\nYou can continue, but using the latest installer is recommended.\n' "$latest" "$current"
     fi
 }
 
@@ -98,6 +98,6 @@ zip_update_warning() {
     latest="$(latest_unraid_zip_version)" || return 0
     # shellcheck disable=SC2016
     if php -r 'exit(version_compare($argv[1], $argv[2], "<") ? 0 : 1);' "$current" "$latest"; then
-        printf 'The selected Unraid ZIP is version %s, but version %s is available. You can continue, but using the latest ZIP is recommended.\n' "$current" "$latest"
+        printf 'The selected Unraid ZIP is version %s, but version %s is available.\nYou can continue, but using the latest ZIP is recommended.\n' "$current" "$latest"
     fi
 }
