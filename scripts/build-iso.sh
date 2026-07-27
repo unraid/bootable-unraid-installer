@@ -2178,6 +2178,7 @@ apply_persistent_install_overrides() {
     create_internal_boot.sh \
     create_flash_boot.sh \
     release_pending_provision.sh \
+    update_partner_runtime.sh \
     zip.sh; do
     if [ -f "$override_root/$file_name" ]; then
       override_found=1
@@ -2201,6 +2202,7 @@ apply_persistent_install_overrides() {
     create_internal_boot.sh \
     create_flash_boot.sh \
     release_pending_provision.sh \
+    update_partner_runtime.sh \
     zip.sh; do
     if [ -f "$override_root/$file_name" ]; then
       override_sha256="$(persistent_override_sha256 "$override_root/$file_name")"

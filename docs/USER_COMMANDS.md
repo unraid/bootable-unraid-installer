@@ -223,6 +223,8 @@ Supported override names currently include:
 - `menu_gui.sh`
 - `create_internal_boot.sh`
 - `create_flash_boot.sh`
+- `release_pending_provision.sh`
+- `update_partner_runtime.sh`
 - `zip.sh`
 
 Use this mechanism only for partner-prepared or support-prepared media where
