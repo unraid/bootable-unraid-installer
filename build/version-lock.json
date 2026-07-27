@@ -1,5 +1,5 @@
 {
   "kernel_series": "6.18",
-  "kernel_version": "6.18.29",
-  "zfs_tag": "2.4.1"
+  "kernel_version": "6.18.38",
+  "zfs_tag": "2.4.3"
 }

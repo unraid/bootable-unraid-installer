@@ -24,6 +24,23 @@ fi
 # shellcheck disable=SC1090
 . "$COMMON_MENU_LIB"
 
+VERSION_CHECK_LIB="${VERSION_CHECK_LIB:-/boot/install/version_check.sh}"
+# shellcheck disable=SC1090
+[[ -f "$VERSION_CHECK_LIB" ]] && . "$VERSION_CHECK_LIB"
+INSTALLER_UPDATE_WARNING_SHOWN=0
+
+show_installer_update_warning() {
+    local warning
+    [[ "$INSTALLER_UPDATE_WARNING_SHOWN" -eq 0 ]] || return 0
+    INSTALLER_UPDATE_WARNING_SHOWN=1
+    warning="$(installer_update_warning 2>/dev/null || true)"
+    if [[ -n "$warning" ]]; then
+        ui_msg "Installer Update Available" "$warning" || true
+    fi
+
+    return 0
+}
+
 set_internal_boot_size() {
     local choice entered
     choice="$(ui_menu "Internal Boot Size" "Current: $(format_boot_size_label)" \
@@ -82,6 +99,8 @@ main_menu_user() {
     local wifi_present=0
     local wifi_enabled=0
     local -a menu_args
+
+    show_installer_update_warning
 
     if [[ "$WIFI_MENU_ENABLED" == "1" ]]; then
         wifi_enabled=1
