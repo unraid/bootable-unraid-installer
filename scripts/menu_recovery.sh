@@ -18,6 +18,22 @@ fi
 # shellcheck disable=SC1090
 . "$COMMON_MENU_LIB"
 
+recovery_status() {
+    local message="$1"
+
+    case "$ui_backend" in
+        whiptail)
+            whiptail --title "Password Reset" --infobox "$message" 8 80
+            ;;
+        dialog)
+            dialog --title "Password Reset" --infobox "$message" 8 80
+            ;;
+        *)
+            printf '[Password Reset] %s\n' "$message"
+            ;;
+    esac
+}
+
 reset_unraid_password() {
     local pool_name="${RECOVERY_BOOT_POOL:-flash}"
     local mount_root=""
@@ -40,6 +56,7 @@ reset_unraid_password() {
     fi
 
     mount_root="$(mktemp -d /mnt/unraid-recovery.XXXXXX)"
+    recovery_status "Importing ZFS boot pool '$pool_name'..."
     if ! zpool import -N -R "$mount_root" "$pool_name"; then
         rmdir "$mount_root" 2>/dev/null || true
         ui_msg "Password Reset" "Unable to import ZFS boot pool '$pool_name'. Ensure the target boot device is connected and not in use."
@@ -47,6 +64,7 @@ reset_unraid_password() {
     fi
 
     dataset_list="$(mktemp /tmp/unraid-recovery-datasets.XXXXXX)"
+    recovery_status "Reading datasets from '$pool_name'..."
     if ! zfs list -H -o name,mountpoint -r "$pool_name" > "$dataset_list"; then
         rm -f "$dataset_list"
         zpool export "$pool_name" >/dev/null 2>&1 || true
@@ -58,6 +76,7 @@ reset_unraid_password() {
     while IFS=$'\t' read -r dataset mountpoint; do
         [[ -n "$dataset" ]] || continue
         [[ "$mountpoint" == "legacy" || "$mountpoint" == "none" || "$mountpoint" == "-" ]] && continue
+        recovery_status "Mounting dataset '$dataset'..."
         if ! zfs mount "$dataset"; then
             rm -f "$dataset_list"
             zpool export "$pool_name" >/dev/null 2>&1 || true
@@ -68,6 +87,7 @@ reset_unraid_password() {
     done < "$dataset_list"
     rm -f "$dataset_list"
 
+    recovery_status "Locating the Unraid config directory..."
     config_dir="$(find -P "$mount_root" -type d -name config -print -quit 2>/dev/null || true)"
     if [[ -z "$config_dir" ]]; then
         zpool export "$pool_name" >/dev/null 2>&1 || true
@@ -76,13 +96,31 @@ reset_unraid_password() {
         return 1
     fi
 
-    if ! rm -f -- "$config_dir/passwd" "$config_dir/shadow" || ! sync; then
+    recovery_status "Deleting config/passwd and config/shadow..."
+    if ! rm -f -- "$config_dir/passwd" "$config_dir/shadow"; then
         zpool export "$pool_name" >/dev/null 2>&1 || true
         rmdir "$mount_root" 2>/dev/null || true
         ui_msg "Password Reset" "Unable to remove the saved password files."
         return 1
     fi
 
+    recovery_status "Verifying password files are absent..."
+    if [[ -e "$config_dir/passwd" || -e "$config_dir/shadow" ]]; then
+        zpool export "$pool_name" >/dev/null 2>&1 || true
+        rmdir "$mount_root" 2>/dev/null || true
+        ui_msg "Password Reset" "The password files are still present in the config directory."
+        return 1
+    fi
+
+    recovery_status "Syncing changes to '$pool_name'..."
+    if ! sync; then
+        zpool export "$pool_name" >/dev/null 2>&1 || true
+        rmdir "$mount_root" 2>/dev/null || true
+        ui_msg "Password Reset" "Unable to sync the password reset changes."
+        return 1
+    fi
+
+    recovery_status "Exporting ZFS boot pool '$pool_name'..."
     if ! zpool export "$pool_name"; then
         ui_msg "Password Reset" "Password files were removed, but the '$pool_name' pool could not be exported. Export it before rebooting."
         return 1
