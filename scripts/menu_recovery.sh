@@ -1,6 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
+ui_backend=""
 SCRIPT_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMMON_MENU_LIB=""
 
@@ -40,6 +41,7 @@ reset_unraid_password() {
     local dataset_list=""
     local config_dir=""
     local dataset mountpoint
+    local mount_failed=0
 
     if ! command -v zpool >/dev/null 2>&1 || ! command -v zfs >/dev/null 2>&1; then
         ui_msg "Password Reset" "ZFS tools are not available in this image."
@@ -78,14 +80,18 @@ reset_unraid_password() {
         [[ "$mountpoint" == "legacy" || "$mountpoint" == "none" || "$mountpoint" == "-" ]] && continue
         recovery_status "Mounting dataset '$dataset'..."
         if ! zfs mount "$dataset"; then
-            rm -f "$dataset_list"
-            zpool export "$pool_name" >/dev/null 2>&1 || true
-            rmdir "$mount_root" 2>/dev/null || true
-            ui_msg "Password Reset" "The '$pool_name' boot dataset could not be mounted."
-            return 1
+            mount_failed=1
+            break
         fi
     done < "$dataset_list"
     rm -f "$dataset_list"
+
+    if [[ "$mount_failed" -eq 1 ]]; then
+        zpool export "$pool_name" >/dev/null 2>&1 || true
+        rmdir "$mount_root" 2>/dev/null || true
+        ui_msg "Password Reset" "The '$pool_name' boot dataset could not be mounted."
+        return 1
+    fi
 
     recovery_status "Locating the Unraid config directory..."
     config_dir="$(find -P "$mount_root" -type d -name config -print -quit 2>/dev/null || true)"
