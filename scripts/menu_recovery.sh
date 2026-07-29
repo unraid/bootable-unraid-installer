@@ -21,6 +21,7 @@ fi
 reset_unraid_password() {
     local pool_name="${RECOVERY_BOOT_POOL:-flash}"
     local mount_root=""
+    local dataset_list=""
     local config_dir=""
     local dataset mountpoint
 
@@ -45,16 +46,27 @@ reset_unraid_password() {
         return 1
     fi
 
+    dataset_list="$(mktemp /tmp/unraid-recovery-datasets.XXXXXX)"
+    if ! zfs list -H -o name,mountpoint -r "$pool_name" > "$dataset_list"; then
+        rm -f "$dataset_list"
+        zpool export "$pool_name" >/dev/null 2>&1 || true
+        rmdir "$mount_root" 2>/dev/null || true
+        ui_msg "Password Reset" "Unable to list datasets in the '$pool_name' boot pool."
+        return 1
+    fi
+
     while IFS=$'\t' read -r dataset mountpoint; do
         [[ -n "$dataset" ]] || continue
         [[ "$mountpoint" == "legacy" || "$mountpoint" == "none" || "$mountpoint" == "-" ]] && continue
         if ! zfs mount "$dataset"; then
+            rm -f "$dataset_list"
             zpool export "$pool_name" >/dev/null 2>&1 || true
             rmdir "$mount_root" 2>/dev/null || true
             ui_msg "Password Reset" "The '$pool_name' boot dataset could not be mounted."
             return 1
         fi
-    done < <(zfs list -H -o name,mountpoint -r "$pool_name")
+    done < "$dataset_list"
+    rm -f "$dataset_list"
 
     config_dir="$(find -P "$mount_root" -type d -name config -print -quit 2>/dev/null || true)"
     if [[ -z "$config_dir" ]]; then
