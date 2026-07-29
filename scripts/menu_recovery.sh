@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ui_backend=""
+RECOVERY_LOG=()
 SCRIPT_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMMON_MENU_LIB=""
 
@@ -22,6 +23,8 @@ fi
 recovery_status() {
     local message="$1"
 
+    RECOVERY_LOG+=("$(date '+%H:%M:%S')  $message")
+
     case "$ui_backend" in
         whiptail)
             whiptail --title "Password Reset" --infobox "$message" 8 80
@@ -33,6 +36,10 @@ recovery_status() {
             printf '[Password Reset] %s\n' "$message"
             ;;
     esac
+}
+
+recovery_log_text() {
+    printf '%s\n' "${RECOVERY_LOG[@]}"
 }
 
 reset_unraid_password() {
@@ -132,7 +139,10 @@ reset_unraid_password() {
         return 1
     fi
     rmdir "$mount_root" 2>/dev/null || true
-    ui_msg "Password Reset" "Password files removed successfully. You can now boot Unraid and set a new password."
+    recovery_status "Password reset complete."
+    ui_msg "Password Reset Complete" "$(recovery_log_text)
+
+Password files were removed successfully. You can now boot Unraid and set a new password."
 }
 
 recovery_menu() {
