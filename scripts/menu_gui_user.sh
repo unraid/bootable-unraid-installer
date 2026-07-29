@@ -143,6 +143,7 @@ main_menu_user() {
         J "Refresh"
         K "Power Off"
         L "Reboot"
+        R "Recovery"
     )
 
     if [[ "$wifi_enabled" -eq 1 && "$wifi_present" -eq 1 ]]; then
@@ -191,6 +192,7 @@ main_menu_user() {
         J) ;;
         K) ui_confirm "Power Off" "Power off this system now?" && do_poweroff ;;
         L) ui_confirm "Reboot" "Reboot this system now?" && do_reboot ;;
+        R) /bin/bash /boot/install/menu_recovery.sh ;;
         *) ;;
     esac
 

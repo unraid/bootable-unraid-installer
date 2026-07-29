@@ -723,10 +723,16 @@ if [ "$MENU_UI" = "gui" ]; then
       echo "Missing required onboarding script: $SCRIPT_DIR/menu_gui_common.sh" >&2
     exit 1
  }
+    [ -f "$SCRIPT_DIR/menu_recovery.sh" ] || {
+      echo "Missing required onboarding script: $SCRIPT_DIR/menu_recovery.sh" >&2
+      exit 1
+   }
     sudo cp "$SCRIPT_DIR/menu_gui_common.sh" "$ONBOARDING_ASSET_DIR/menu_gui_common.sh"
    sudo cp "$SCRIPT_DIR/menu_gui_user.sh" "$ONBOARDING_ASSET_DIR/menu_gui_user.sh"
+    sudo cp "$SCRIPT_DIR/menu_recovery.sh" "$ONBOARDING_ASSET_DIR/menu_recovery.sh"
     sudo chmod +x "$ONBOARDING_ASSET_DIR/menu_gui_common.sh"
    sudo chmod +x "$ONBOARDING_ASSET_DIR/menu_gui_user.sh"
+    sudo chmod +x "$ONBOARDING_ASSET_DIR/menu_recovery.sh"
 fi
 
 sudo cp "$SCRIPT_DIR/create_internal_boot_user.sh" "$ONBOARDING_ASSET_DIR/create_internal_boot.sh"
@@ -741,7 +747,7 @@ fi
 printf '%s\n' "$installer_version" | sudo tee "$ONBOARDING_ASSET_DIR/installer-version" >/dev/null
 sudo cp "$SCRIPT_DIR/menu_gui_common.sh" "$ONBOARDING_ASSET_DIR/menu_gui_common.sh"
 sudo cp "$SCRIPT_DIR/menu_gui_user.sh" "$ONBOARDING_ASSET_DIR/menu.sh"
-sudo chmod +x "$ONBOARDING_ASSET_DIR/menu.sh" "$ONBOARDING_ASSET_DIR/menu_gui_common.sh" "$ONBOARDING_ASSET_DIR/create_internal_boot.sh" "$ONBOARDING_ASSET_DIR/create_flash_boot.sh" "$ONBOARDING_ASSET_DIR/zip.sh" "$ONBOARDING_ASSET_DIR/version_check.sh"
+sudo chmod +x "$ONBOARDING_ASSET_DIR/menu.sh" "$ONBOARDING_ASSET_DIR/menu_gui_common.sh" "$ONBOARDING_ASSET_DIR/menu_recovery.sh" "$ONBOARDING_ASSET_DIR/create_internal_boot.sh" "$ONBOARDING_ASSET_DIR/create_flash_boot.sh" "$ONBOARDING_ASSET_DIR/zip.sh" "$ONBOARDING_ASSET_DIR/version_check.sh"
 
 if [ -n "$MENU_BACKEND_DEFAULT" ]; then
    printf '%s\n' "$MENU_BACKEND_DEFAULT" | sudo tee "$ONBOARDING_ASSET_DIR/menu-backend" >/dev/null
@@ -2174,6 +2180,7 @@ apply_persistent_install_overrides() {
     menu.sh \
     menu_gui_common.sh \
     menu_gui_user.sh \
+    menu_recovery.sh \
     menu_gui.sh \
     create_internal_boot.sh \
     create_flash_boot.sh \
@@ -2198,6 +2205,7 @@ apply_persistent_install_overrides() {
     menu.sh \
     menu_gui_common.sh \
     menu_gui_user.sh \
+    menu_recovery.sh \
     menu_gui.sh \
     create_internal_boot.sh \
     create_flash_boot.sh \
