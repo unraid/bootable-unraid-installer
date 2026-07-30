@@ -148,15 +148,15 @@ Password files were removed successfully. You can now boot Unraid and set a new 
 recovery_menu() {
     local choice=""
 
-    if ! choice="$(ui_menu "Recovery" "Select a recovery action" 1 "Reset password" B "Back")"; then
-        choice="$(ui_hotkey_select "Recovery" "Select a recovery action" 1 "Reset password" B "Back")"
+    if ! choice="$(ui_menu "Recovery" "Select a recovery action" A "Reset password" B "Back")"; then
+        choice="$(ui_hotkey_select "Recovery" "Select a recovery action" A "Reset password" B "Back")"
     fi
     choice="${choice//$'\r'/}"
     choice="${choice//[[:space:]]/}"
     choice="${choice^^}"
 
     case "$choice" in
-        1) reset_unraid_password ;;
+        A) reset_unraid_password ;;
         *) ;;
     esac
 }
