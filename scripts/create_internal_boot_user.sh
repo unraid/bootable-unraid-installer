@@ -1047,7 +1047,20 @@ if [[ ! -d /boot-transfer ]]; then
 fi
 
 if [[ -n "$RESTORE_BACKUP" ]]; then
-    run_operation unzip -o "$ZIP_FILE" -d /boot-transfer || exit 1
+    generated_grub_cfg="/boot-transfer/grub/grub.cfg"
+    if [[ ! -f "$generated_grub_cfg" ]]; then
+        error_msg "ERROR: mkbootable did not create $generated_grub_cfg"
+        exit 1
+    fi
+    generated_grub_sha="$(sha256sum "$generated_grub_cfg" | awk '{print $1}')"
+    log_msg "Preserving bootloader files generated for the new flash pool."
+    run_operation unzip -o "$ZIP_FILE" -d /boot-transfer \
+      -x 'efi' 'efi/*' 'EFI' 'EFI/*' 'grub' 'grub/*' 'grubenv' \
+         'ldlinux*' 'make_bootable*' 'syslinux' 'syslinux/*' || exit 1
+    if [[ "$(sha256sum "$generated_grub_cfg" | awk '{print $1}')" != "$generated_grub_sha" ]]; then
+        error_msg "ERROR: restore changed the generated bootloader configuration."
+        exit 1
+    fi
 else
     # -o avoids interactive overwrite prompts when rerunning on an existing /boot-transfer.
     run_operation unzip -o "$ZIP_FILE" -d /boot-transfer \
