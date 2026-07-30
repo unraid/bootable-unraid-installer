@@ -47,7 +47,8 @@ reset_unraid_password() {
     local mount_root=""
     local dataset_list=""
     local config_dir=""
-    local dataset mountpoint resolved_mount_root resolved_config_dir candidate_config
+    local dataset mountpoint resolved_mount_root resolved_config_dir
+    local config_list=""
     local mount_failed=0
     local config_candidate_count=0
     local config_symlink_found=0
@@ -112,19 +113,20 @@ reset_unraid_password() {
         return 1
     fi
 
-    while IFS=$'\t' read -r dataset mountpoint; do
-        [[ "$mountpoint" == /* ]] || continue
-        candidate_config="$mount_root${mountpoint%/}/config"
-        if [[ -L "$candidate_config" ]]; then
-            config_symlink_found=1
-            break
-        fi
-        resolved_config_dir="$(readlink -f -- "$candidate_config" 2>/dev/null || true)"
+    config_list="$(mktemp /tmp/unraid-recovery-configs.XXXXXX)"
+    find -P "$mount_root" -type d -name config -print > "$config_list"
+    if find -P "$mount_root" -type l -name config -print -quit | grep -q .; then
+        config_symlink_found=1
+    fi
+
+    while IFS= read -r config_dir; do
+        resolved_config_dir="$(readlink -f -- "$config_dir" 2>/dev/null || true)"
         if [[ "$resolved_config_dir" == "$resolved_mount_root"/* && -d "$resolved_config_dir" ]]; then
             config_dir="$resolved_config_dir"
             ((++config_candidate_count))
         fi
-    done < "$dataset_list"
+    done < "$config_list"
+    rm -f "$config_list"
     rm -f "$dataset_list"
 
     if [[ "$config_symlink_found" -eq 1 ]]; then
