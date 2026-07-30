@@ -63,7 +63,7 @@ reset_unraid_password() {
         return 1
     fi
 
-    if ! ui_confirm "Reset Password" "This removes config/passwd and config/shadow from the '$pool_name' boot pool. The next Unraid boot will have no web password. Continue?"; then
+    if ! ui_confirm "Reset Password" "This removes config/shadow and config/smbpasswd from the '$pool_name' boot pool. The next Unraid boot will require a new root password. Continue?"; then
         return 0
     fi
 
@@ -143,8 +143,8 @@ reset_unraid_password() {
         return 1
     fi
 
-    recovery_status "Deleting config/passwd and config/shadow..."
-    if ! rm -f -- "$config_dir/passwd" "$config_dir/shadow"; then
+    recovery_status "Deleting config/shadow and config/smbpasswd..."
+    if ! rm -f -- "$config_dir/shadow" "$config_dir/smbpasswd"; then
         zpool export "$pool_name" >/dev/null 2>&1 || true
         rmdir "$mount_root" 2>/dev/null || true
         ui_msg "Password Reset" "Unable to remove the saved password files."
@@ -152,7 +152,7 @@ reset_unraid_password() {
     fi
 
     recovery_status "Verifying password files are absent..."
-    if [[ -e "$config_dir/passwd" || -e "$config_dir/shadow" ]]; then
+    if [[ -e "$config_dir/shadow" || -e "$config_dir/smbpasswd" ]]; then
         zpool export "$pool_name" >/dev/null 2>&1 || true
         rmdir "$mount_root" 2>/dev/null || true
         ui_msg "Password Reset" "The password files are still present in the config directory."
