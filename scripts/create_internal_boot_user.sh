@@ -1047,8 +1047,27 @@ if [[ ! -d /boot-transfer ]]; then
 fi
 
 if [[ -n "$RESTORE_BACKUP" ]]; then
-    log_msg "Restoring bootloader configuration and Unraid UUID from the backup."
+    generated_grub_cfg="/boot-transfer/grub/grub.cfg"
+    if [[ ! -f "$generated_grub_cfg" ]]; then
+        error_msg "ERROR: mkbootable did not create $generated_grub_cfg"
+        exit 1
+    fi
+    generated_unraid_uuid="$(awk 'match($0, /unraiduuid=[^[:space:]]+/) { print substr($0, RSTART + 11, RLENGTH - 11); exit }' "$generated_grub_cfg")"
+    if [[ ! "$generated_unraid_uuid" =~ ^[0-9]+$ ]]; then
+        error_msg "ERROR: unable to determine the new boot pool Unraid UUID"
+        exit 1
+    fi
+    log_msg "Restoring bootloader configuration and updating its Unraid UUID for the new boot pool."
     run_operation unzip -o "$ZIP_FILE" -d /boot-transfer || exit 1
+    if [[ ! -f "$generated_grub_cfg" ]]; then
+        error_msg "ERROR: restore backup did not contain $generated_grub_cfg"
+        exit 1
+    fi
+    run_operation sed -i -E "s/unraiduuid=[^[:space:]]+/unraiduuid=${generated_unraid_uuid}/g" "$generated_grub_cfg" || exit 1
+    if ! grep -q "unraiduuid=${generated_unraid_uuid}" "$generated_grub_cfg"; then
+        error_msg "ERROR: unable to update the restored bootloader Unraid UUID"
+        exit 1
+    fi
 else
     # -o avoids interactive overwrite prompts when rerunning on an existing /boot-transfer.
     run_operation unzip -o "$ZIP_FILE" -d /boot-transfer \
