@@ -1142,10 +1142,15 @@ run_operation zpool export flash
 status_msg "Internal boot image creation complete"
 log_msg "Operation log: $RUN_LOG_FILE"
 
-if [[ "$ui_backend" != "text" ]]; then
+if [[ -n "$RESTORE_BACKUP" ]]; then
+    if [[ "$ui_backend" != "text" ]]; then
+        ui_msg "Restore Complete" "Boot backup restored successfully. Showing the operation log."
+    fi
+    ui_view_log "Boot Backup Restore Log" "$RUN_LOG_FILE"
+elif [[ "$ui_backend" != "text" ]]; then
     ui_msg "Internal Boot Complete" "Internal boot image creation complete."
 fi
 
-if confirm "View full operation log now?" "n"; then
+if [[ -z "$RESTORE_BACKUP" ]] && confirm "View full operation log now?" "n"; then
     ui_view_log "Internal Boot Full Log" "$RUN_LOG_FILE"
 fi
