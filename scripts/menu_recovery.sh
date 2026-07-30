@@ -105,7 +105,11 @@ reset_unraid_password() {
         return 1
     fi
 
-    config_dir="$mount_root${boot_mountpoint%/}/config"
+    if [[ "$boot_mountpoint" == "$mount_root" || "$boot_mountpoint" == "$mount_root"/* ]]; then
+        config_dir="${boot_mountpoint%/}/config"
+    else
+        config_dir="$mount_root${boot_mountpoint%/}/config"
+    fi
     if [[ -L "$config_dir" ]]; then
         zpool export "$pool_name" >/dev/null 2>&1 || true
         rmdir "$mount_root" 2>/dev/null || true
