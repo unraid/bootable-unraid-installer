@@ -44,14 +44,12 @@ recovery_log_text() {
 
 reset_unraid_password() {
     local pool_name="${RECOVERY_BOOT_POOL:-flash}"
+    local boot_dataset="${RECOVERY_BOOT_DATASET:-${pool_name}/boot}"
     local mount_root=""
-    local dataset_list=""
     local config_dir=""
-    local dataset mountpoint resolved_mount_root resolved_config_dir
-    local config_list=""
-    local mount_failed=0
-    local config_candidate_count=0
-    local config_symlink_found=0
+    local boot_mountpoint=""
+    local resolved_mount_root=""
+    local resolved_config_dir=""
 
     if ! command -v zpool >/dev/null 2>&1 || ! command -v zfs >/dev/null 2>&1; then
         ui_msg "Password Reset" "ZFS tools are not available in this image."
@@ -75,75 +73,57 @@ reset_unraid_password() {
         return 1
     fi
 
-    dataset_list="$(mktemp /tmp/unraid-recovery-datasets.XXXXXX)"
-    recovery_status "Reading datasets from '$pool_name'..."
-    if ! zfs list -H -o name,mountpoint -r "$pool_name" > "$dataset_list"; then
-        rm -f "$dataset_list"
+    if ! zfs list -H -o name "$boot_dataset" >/dev/null 2>&1; then
         zpool export "$pool_name" >/dev/null 2>&1 || true
         rmdir "$mount_root" 2>/dev/null || true
-        ui_msg "Password Reset" "Unable to list datasets in the '$pool_name' boot pool."
+        ui_msg "Password Reset" "The expected boot dataset '$boot_dataset' was not found."
         return 1
     fi
 
-    while IFS=$'\t' read -r dataset mountpoint; do
-        [[ -n "$dataset" ]] || continue
-        [[ "$mountpoint" == "legacy" || "$mountpoint" == "none" || "$mountpoint" == "-" ]] && continue
-        recovery_status "Mounting dataset '$dataset'..."
-        if ! zfs mount "$dataset"; then
-            mount_failed=1
-            break
-        fi
-    done < "$dataset_list"
-
-    if [[ "$mount_failed" -eq 1 ]]; then
-        rm -f "$dataset_list"
+    recovery_status "Mounting boot dataset '$boot_dataset'..."
+    if ! zfs mount "$boot_dataset"; then
         zpool export "$pool_name" >/dev/null 2>&1 || true
         rmdir "$mount_root" 2>/dev/null || true
-        ui_msg "Password Reset" "The '$pool_name' boot dataset could not be mounted."
+        ui_msg "Password Reset" "The '$boot_dataset' boot dataset could not be mounted."
         return 1
     fi
 
-    recovery_status "Locating the Unraid config directory..."
+    boot_mountpoint="$(zfs get -H -o value mountpoint "$boot_dataset" 2>/dev/null || true)"
+    if [[ -z "$boot_mountpoint" || "$boot_mountpoint" == "legacy" || "$boot_mountpoint" == "none" || "$boot_mountpoint" != /* ]]; then
+        zpool export "$pool_name" >/dev/null 2>&1 || true
+        rmdir "$mount_root" 2>/dev/null || true
+        ui_msg "Password Reset" "The '$boot_dataset' dataset does not have a usable mount point."
+        return 1
+    fi
+
+    recovery_status "Locating the Unraid config directory in '$boot_dataset'..."
     resolved_mount_root="$(readlink -f -- "$mount_root" 2>/dev/null || true)"
     if [[ -z "$resolved_mount_root" ]]; then
-        rm -f "$dataset_list"
         zpool export "$pool_name" >/dev/null 2>&1 || true
         rmdir "$mount_root" 2>/dev/null || true
         ui_msg "Password Reset" "Unable to resolve the temporary boot-pool mount root."
         return 1
     fi
 
-    config_list="$(mktemp /tmp/unraid-recovery-configs.XXXXXX)"
-    find -P "$mount_root" -type d -name config -print > "$config_list"
-    if find -P "$mount_root" -type l -name config -print -quit | grep -q .; then
-        config_symlink_found=1
-    fi
-
-    while IFS= read -r config_dir; do
-        resolved_config_dir="$(readlink -f -- "$config_dir" 2>/dev/null || true)"
-        if [[ "$resolved_config_dir" == "$resolved_mount_root"/* && -d "$resolved_config_dir" ]]; then
-            config_dir="$resolved_config_dir"
-            ((++config_candidate_count))
-        fi
-    done < "$config_list"
-    rm -f "$config_list"
-    rm -f "$dataset_list"
-
-    if [[ "$config_symlink_found" -eq 1 ]]; then
+    config_dir="$mount_root${boot_mountpoint%/}/config"
+    if [[ -L "$config_dir" ]]; then
         zpool export "$pool_name" >/dev/null 2>&1 || true
         rmdir "$mount_root" 2>/dev/null || true
         ui_msg "Password Reset" "A boot config directory is a symlink. Refusing to modify it."
         return 1
     fi
 
-    if [[ "$config_candidate_count" -ne 1 ]]; then
+    resolved_config_dir="$(readlink -f -- "$config_dir" 2>/dev/null || true)"
+    if [[ -z "$resolved_config_dir" || "$resolved_config_dir" != "$resolved_mount_root"/* || ! -d "$resolved_config_dir" ]]; then
         zpool export "$pool_name" >/dev/null 2>&1 || true
         rmdir "$mount_root" 2>/dev/null || true
-        ui_msg "Password Reset" "Expected exactly one boot config directory, found $config_candidate_count."
+        ui_msg "Password Reset" "The expected config directory was not found at '$config_dir'."
         return 1
     fi
+    config_dir="$resolved_config_dir"
 
-    recovery_status "Deleting config/passwd and config/shadow..."
+    recovery_status "Before deletion (ls -l): $(ls -l -- "$config_dir/passwd" "$config_dir/shadow" 2>&1)"
+    recovery_status "Deleting config/passwd and config/shadow from '$config_dir'..."
     if ! rm -f -- "$config_dir/passwd" "$config_dir/shadow"; then
         zpool export "$pool_name" >/dev/null 2>&1 || true
         rmdir "$mount_root" 2>/dev/null || true
@@ -151,6 +131,7 @@ reset_unraid_password() {
         return 1
     fi
 
+    recovery_status "After deletion (ls -l): $(ls -l -- "$config_dir/passwd" "$config_dir/shadow" 2>&1)"
     recovery_status "Verifying password files are absent..."
     if [[ -e "$config_dir/passwd" || -e "$config_dir/shadow" ]]; then
         zpool export "$pool_name" >/dev/null 2>&1 || true
