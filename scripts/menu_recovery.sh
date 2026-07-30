@@ -50,6 +50,7 @@ reset_unraid_password() {
     local dataset mountpoint resolved_mount_root resolved_config_dir candidate_config
     local mount_failed=0
     local config_candidate_count=0
+    local config_symlink_found=0
 
     if ! command -v zpool >/dev/null 2>&1 || ! command -v zfs >/dev/null 2>&1; then
         ui_msg "Password Reset" "ZFS tools are not available in this image."
@@ -115,11 +116,8 @@ reset_unraid_password() {
         [[ "$mountpoint" == /* ]] || continue
         candidate_config="$mount_root${mountpoint%/}/config"
         if [[ -L "$candidate_config" ]]; then
-            rm -f "$dataset_list"
-            zpool export "$pool_name" >/dev/null 2>&1 || true
-            rmdir "$mount_root" 2>/dev/null || true
-            ui_msg "Password Reset" "A boot config directory is a symlink. Refusing to modify it."
-            return 1
+            config_symlink_found=1
+            break
         fi
         resolved_config_dir="$(readlink -f -- "$candidate_config" 2>/dev/null || true)"
         if [[ "$resolved_config_dir" == "$resolved_mount_root"/* && -d "$resolved_config_dir" ]]; then
@@ -128,6 +126,13 @@ reset_unraid_password() {
         fi
     done < "$dataset_list"
     rm -f "$dataset_list"
+
+    if [[ "$config_symlink_found" -eq 1 ]]; then
+        zpool export "$pool_name" >/dev/null 2>&1 || true
+        rmdir "$mount_root" 2>/dev/null || true
+        ui_msg "Password Reset" "A boot config directory is a symlink. Refusing to modify it."
+        return 1
+    fi
 
     if [[ "$config_candidate_count" -ne 1 ]]; then
         zpool export "$pool_name" >/dev/null 2>&1 || true
