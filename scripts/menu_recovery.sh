@@ -45,10 +45,9 @@ recovery_log_text() {
 reset_unraid_password() {
     local pool_name="${RECOVERY_BOOT_POOL:-flash}"
     local mount_root=""
-    local dataset_list=""
     local config_dir=""
+    local dataset_lines=""
     local dataset mountpoint root_mountpoint resolved_mount_root resolved_config_dir
-    local mount_failed=0
 
     if ! command -v zpool >/dev/null 2>&1 || ! command -v zfs >/dev/null 2>&1; then
         ui_msg "Password Reset" "ZFS tools are not available in this image."
@@ -72,10 +71,8 @@ reset_unraid_password() {
         return 1
     fi
 
-    dataset_list="$(mktemp /tmp/unraid-recovery-datasets.XXXXXX)"
     recovery_status "Reading datasets from '$pool_name'..."
-    if ! zfs list -H -o name,mountpoint -r "$pool_name" > "$dataset_list"; then
-        rm -f "$dataset_list"
+    if ! dataset_lines="$(zfs list -H -o name,mountpoint -r "$pool_name")"; then
         zpool export "$pool_name" >/dev/null 2>&1 || true
         rmdir "$mount_root" 2>/dev/null || true
         ui_msg "Password Reset" "Unable to list datasets in the '$pool_name' boot pool."
@@ -87,16 +84,17 @@ reset_unraid_password() {
         [[ "$mountpoint" == "legacy" || "$mountpoint" == "none" || "$mountpoint" == "-" ]] && continue
         recovery_status "Mounting dataset '$dataset'..."
         if ! zfs mount "$dataset"; then
-            mount_failed=1
-            break
+            zpool export "$pool_name" >/dev/null 2>&1 || true
+            rmdir "$mount_root" 2>/dev/null || true
+            ui_msg "Password Reset" "The '$pool_name' boot dataset could not be mounted."
+            return 1
         fi
-    done < "$dataset_list"
-    rm -f "$dataset_list"
+    done <<< "$dataset_lines"
 
-    if [[ "$mount_failed" -eq 1 ]]; then
+    if [[ -z "$dataset_lines" ]]; then
         zpool export "$pool_name" >/dev/null 2>&1 || true
         rmdir "$mount_root" 2>/dev/null || true
-        ui_msg "Password Reset" "The '$pool_name' boot dataset could not be mounted."
+        ui_msg "Password Reset" "No datasets were found in the '$pool_name' boot pool."
         return 1
     fi
 

@@ -1,6 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
+# shellcheck disable=SC2034 # Consumed by the sourced menu library.
 ui_backend=""
 SCRIPT_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMMON_MENU_LIB=""
