@@ -47,7 +47,7 @@ reset_unraid_password() {
     local mount_root=""
     local dataset_list=""
     local config_dir=""
-    local dataset mountpoint
+    local dataset mountpoint root_mountpoint
     local mount_failed=0
 
     if ! command -v zpool >/dev/null 2>&1 || ! command -v zfs >/dev/null 2>&1; then
@@ -101,11 +101,18 @@ reset_unraid_password() {
     fi
 
     recovery_status "Locating the Unraid config directory..."
-    config_dir="$(find -P "$mount_root" -type d -name config -print -quit 2>/dev/null || true)"
-    if [[ -z "$config_dir" ]]; then
+    root_mountpoint="$(zfs get -H -o value mountpoint "$pool_name" 2>/dev/null || true)"
+    if [[ "$root_mountpoint" != /* ]]; then
         zpool export "$pool_name" >/dev/null 2>&1 || true
         rmdir "$mount_root" 2>/dev/null || true
-        ui_msg "Password Reset" "No config directory was found on the '$pool_name' boot pool."
+        ui_msg "Password Reset" "The '$pool_name' boot dataset does not have a usable mount point."
+        return 1
+    fi
+    config_dir="$mount_root${root_mountpoint%/}/config"
+    if [[ ! -d "$config_dir" ]]; then
+        zpool export "$pool_name" >/dev/null 2>&1 || true
+        rmdir "$mount_root" 2>/dev/null || true
+        ui_msg "Password Reset" "Expected config directory was not found: $config_dir"
         return 1
     fi
 
@@ -148,8 +155,10 @@ Password files were removed successfully. You can now boot Unraid and set a new 
 recovery_menu() {
     local choice=""
 
-    if ! choice="$(ui_menu "Recovery" "Select a recovery action" A "Reset password" B "Back")"; then
+    if [[ "$ui_backend" == "text" ]]; then
         choice="$(ui_hotkey_select "Recovery" "Select a recovery action" A "Reset password" B "Back")"
+    else
+        choice="$(ui_menu "Recovery" "Select a recovery action" A "Reset password" B "Back")" || return 0
     fi
     choice="${choice//$'\r'/}"
     choice="${choice//[[:space:]]/}"
