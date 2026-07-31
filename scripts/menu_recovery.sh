@@ -159,13 +159,21 @@ reset_unraid_password() {
 Password files were removed successfully. You can now boot Unraid and set a new password."
 }
 
+start_recovery_smb() {
+    /bin/bash /boot/install/menu_recovery_smb.sh
+}
+
+start_recovery_restore() {
+    /bin/bash /boot/install/menu_recovery_restore.sh
+}
+
 recovery_menu() {
     local choice=""
 
     if [[ "$ui_backend" == "text" ]]; then
-        choice="$(ui_hotkey_select "Recovery" "Select a recovery action" A "Reset password" B "Back")"
+        choice="$(ui_hotkey_select "Recovery" "Select a recovery action" A "Reset password" B "Start SMB Backup Share" C "Restore boot backup" D "Back")"
     else
-        choice="$(ui_menu "Recovery" "Select a recovery action" A "Reset password" B "Back")" || return 0
+        choice="$(ui_menu "Recovery" "Select a recovery action" A "Reset password" B "Start SMB Backup Share" C "Restore boot backup" D "Back")" || return 0
     fi
     choice="${choice//$'\r'/}"
     choice="${choice//[[:space:]]/}"
@@ -173,6 +181,8 @@ recovery_menu() {
 
     case "$choice" in
         A) reset_unraid_password ;;
+        B) start_recovery_smb ;;
+        C) start_recovery_restore ;;
         *) ;;
     esac
 }

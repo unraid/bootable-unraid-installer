@@ -13,6 +13,8 @@ done
 # shellcheck disable=SC1090
 . "$COMMON_MENU_LIB"
 
+detect_ui_backend
+
 backup_dir="/mnt/persist/recovery-backups"
 backup_file=""
 
@@ -20,7 +22,12 @@ select_backup() {
     local -a menu_args=()
     local file choice=1 list_file
     list_file="$(mktemp /tmp/unraid-recovery-backups.XXXXXX)"
-    find "$backup_dir" -maxdepth 1 -type f -iname '*.zip' -printf '%f\n' | sort > "$list_file"
+    (
+        shopt -s nullglob nocaseglob
+        for file in "$backup_dir"/*.zip; do
+            printf '%s\n' "${file##*/}"
+        done
+    ) | sort > "$list_file"
     while IFS= read -r file; do
         [[ -n "$file" ]] || continue
         menu_args+=("$choice" "$(basename "$file")")
