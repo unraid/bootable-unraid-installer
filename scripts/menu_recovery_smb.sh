@@ -41,8 +41,12 @@ if ! ui_confirm "Enable SMB Backup Share" "Start a temporary guest-writable SMB 
     exit 0
 fi
 
+<<<<<<< HEAD
 mkdir -p /run/samba/ncalrpc "$share_dir" "$runtime_dir"
 chmod 0700 /run/samba/ncalrpc
+=======
+mkdir -p "$share_dir" "$runtime_dir"
+>>>>>>> 95d3816f0f803947c425ad1d73b801654f6d4ee8
 chmod 0700 "$share_dir"
 cat > "$runtime_dir/smb.conf" <<EOF
 [global]
