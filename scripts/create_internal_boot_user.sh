@@ -34,6 +34,7 @@ MIN_DATA_PART_MIB=1
 REQUESTED_DEDICATED_SIZE=0
 BOOT_POOL_NAME="${BOOT_POOL_NAME:-boot}"
 BOOT_DEVICE_COUNT=1
+RESTORE_BACKUP=""
 
 while (($#)); do
     case "$1" in
@@ -45,6 +46,11 @@ while (($#)); do
         --size)
             [[ $# -ge 2 ]] || { echo "Missing value for --size" >&2; exit 1; }
             SIZE="$2"
+            shift 2
+            ;;
+        --restore-backup)
+            [[ $# -ge 2 ]] || { echo "Missing value for --restore-backup" >&2; exit 1; }
+            RESTORE_BACKUP="$2"
             shift 2
             ;;
         *)
@@ -746,7 +752,22 @@ if [[ "${PERSIST_READY:-0}" != "1" ]]; then
     status_msg "Persistent storage is not mounted. Using in-memory ZIP path: ${ZIP_DIR}"
 fi
 
-if compgen -G "${ZIP_DIR}/unRAIDServer-*-x86_64.zip" > /dev/null; then
+if [[ -n "$RESTORE_BACKUP" ]]; then
+    ZIP_FILE="$RESTORE_BACKUP"
+    if [[ ! -f "$ZIP_FILE" ]]; then
+        error_msg "ERROR: restore backup does not exist: $ZIP_FILE"
+        exit 1
+    fi
+    if ! unzip -Z1 "$ZIP_FILE" | grep -qx 'config/' || ! unzip -Z1 "$ZIP_FILE" | grep -qx 'bzimage'; then
+        error_msg "ERROR: restore backup must contain config/ and bzimage."
+        exit 1
+    fi
+    if unzip -Z1 "$ZIP_FILE" | grep -Eq '(^/|(^|/)\.\.(/|$))'; then
+        error_msg "ERROR: restore backup contains unsafe paths."
+        exit 1
+    fi
+    status_msg "Using restore backup: $ZIP_FILE"
+elif compgen -G "${ZIP_DIR}/unRAIDServer-*-x86_64.zip" > /dev/null; then
     ZIP_FILE="$(find "$ZIP_DIR" -maxdepth 1 -type f -name 'unRAIDServer-*-x86_64.zip' -print | sort -V | tail -n1)"
 else
     error_msg "ERROR: no unRAIDServer zip files found in ${ZIP_DIR}"
@@ -755,10 +776,10 @@ fi
 
 ensure_zfs_runtime
 status_msg "Internal boot image tool"
-status_msg "Using zip file: $ZIP_FILE"
+[[ -n "$RESTORE_BACKUP" ]] || status_msg "Using zip file: $ZIP_FILE"
 
 VERSION_CHECK_LIB="${VERSION_CHECK_LIB:-/boot/install/version_check.sh}"
-if [[ -f "$VERSION_CHECK_LIB" ]]; then
+if [[ -z "$RESTORE_BACKUP" && -f "$VERSION_CHECK_LIB" ]]; then
     # shellcheck disable=SC1090
     . "$VERSION_CHECK_LIB"
     zip_warning="$(zip_update_warning "$ZIP_FILE" 2>/dev/null || true)"
@@ -1016,17 +1037,43 @@ if (( BOOT_DEVICE_COUNT == 2 )); then
     run_operation lsblk "$TARGET_2"
 fi
 
-step_update "Extracting ZIP payload to boot-transfer"
+if [[ -n "$RESTORE_BACKUP" ]]; then
+    step_update "Extracting boot backup to boot-transfer"
+else
+    step_update "Extracting ZIP payload to boot-transfer"
+fi
 if [[ ! -d /boot-transfer ]]; then
     run_operation mkdir /boot-transfer
 fi
 
-#files for zip are in /boot/zip
-
-# -o avoids interactive overwrite prompts when rerunning on an existing /boot-transfer.
-run_operation unzip -o "$ZIP_FILE" -d /boot-transfer \
-  -x 'EFI*' 'FOUND*' 'FSCK*' 'System*' \
-     'grub' 'grub/*' 'ldlinux*' 'make_bootable*' 'syslinux' 'syslinux/*' || exit 1
+if [[ -n "$RESTORE_BACKUP" ]]; then
+    generated_grub_cfg="/boot-transfer/grub/grub.cfg"
+    if [[ ! -f "$generated_grub_cfg" ]]; then
+        error_msg "ERROR: mkbootable did not create $generated_grub_cfg"
+        exit 1
+    fi
+    generated_unraid_uuid="$(awk 'match($0, /unraiduuid=[^[:space:]]+/) { print substr($0, RSTART + 11, RLENGTH - 11); exit }' "$generated_grub_cfg")"
+    if [[ ! "$generated_unraid_uuid" =~ ^[0-9]+$ ]]; then
+        error_msg "ERROR: unable to determine the new boot pool Unraid UUID"
+        exit 1
+    fi
+    log_msg "Restoring bootloader configuration and updating its Unraid UUID for the new boot pool."
+    run_operation unzip -o "$ZIP_FILE" -d /boot-transfer || exit 1
+    if [[ ! -f "$generated_grub_cfg" ]]; then
+        error_msg "ERROR: restore backup did not contain $generated_grub_cfg"
+        exit 1
+    fi
+    run_operation sed -i -E "s/unraiduuid=[^[:space:]]+/unraiduuid=${generated_unraid_uuid}/g" "$generated_grub_cfg" || exit 1
+    if ! grep -q "unraiduuid=${generated_unraid_uuid}" "$generated_grub_cfg"; then
+        error_msg "ERROR: unable to update the restored bootloader Unraid UUID"
+        exit 1
+    fi
+else
+    # -o avoids interactive overwrite prompts when rerunning on an existing /boot-transfer.
+    run_operation unzip -o "$ZIP_FILE" -d /boot-transfer \
+      -x 'EFI*' 'FOUND*' 'FSCK*' 'System*' \
+         'grub' 'grub/*' 'ldlinux*' 'make_bootable*' 'syslinux' 'syslinux/*' || exit 1
+fi
 
 step_update "Validating SHA256 checksums"
 run_operation sync -f /boot
@@ -1115,10 +1162,15 @@ run_operation zpool export flash
 status_msg "Internal boot image creation complete"
 log_msg "Operation log: $RUN_LOG_FILE"
 
-if [[ "$ui_backend" != "text" ]]; then
+if [[ -n "$RESTORE_BACKUP" ]]; then
+    if [[ "$ui_backend" != "text" ]]; then
+        ui_msg "Restore Complete" "Boot backup restored successfully. Showing the operation log."
+    fi
+    ui_view_log "Boot Backup Restore Log" "$RUN_LOG_FILE"
+elif [[ "$ui_backend" != "text" ]]; then
     ui_msg "Internal Boot Complete" "Internal boot image creation complete."
 fi
 
-if confirm "View full operation log now?" "n"; then
+if [[ -z "$RESTORE_BACKUP" ]] && confirm "View full operation log now?" "n"; then
     ui_view_log "Internal Boot Full Log" "$RUN_LOG_FILE"
 fi
