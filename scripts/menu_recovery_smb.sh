@@ -14,7 +14,10 @@ done
 # shellcheck disable=SC1090
 . "$COMMON_MENU_LIB"
 
+detect_ui_backend
+
 share_dir="/mnt/persist/recovery-backups"
+installer_zip_dir="/mnt/persist/zips"
 runtime_dir="/run/unraid-recovery-smb"
 
 if ! mountpoint -q /mnt/persist; then
@@ -37,21 +40,29 @@ if [[ -f "$runtime_dir/smbd.pid" ]] && kill -0 "$(cat "$runtime_dir/smbd.pid")" 
     exit 0
 fi
 
-if ! ui_confirm "Enable SMB Backup Share" "Start a temporary guest-writable SMB share for uploading boot backups? Anyone on this network can write to it until the installer reboots."; then
+if ! ui_confirm "Enable SMB Backup Share" "Delete installer ZIPs from $installer_zip_dir and start a temporary guest-writable SMB share? Anyone on this network can write to it until the installer reboots."; then
     exit 0
 fi
 
-<<<<<<< HEAD
 mkdir -p /run/samba/ncalrpc "$share_dir" "$runtime_dir"
 chmod 0700 /run/samba/ncalrpc
-=======
-mkdir -p "$share_dir" "$runtime_dir"
->>>>>>> 95d3816f0f803947c425ad1d73b801654f6d4ee8
 chmod 0700 "$share_dir"
+if [[ -d "$installer_zip_dir" ]] && ! find "$installer_zip_dir" -maxdepth 1 -type f -iname '*.zip' -delete; then
+    ui_msg "SMB Backup Share" "Unable to remove installer ZIPs from $installer_zip_dir."
+    exit 1
+fi
+guest_user="nobody"
+if ! chown nobody:nogroup "$share_dir" 2>/dev/null; then
+    # Some persistent-storage filesystems do not support POSIX ownership.
+    # Samba must use root there because the directory cannot be made writable
+    # by the unprivileged guest account.
+    guest_user="root"
+fi
 cat > "$runtime_dir/smb.conf" <<EOF
 [global]
   security = user
   map to guest = Bad User
+  guest account = $guest_user
   pid directory = $runtime_dir
   lock directory = $runtime_dir
   state directory = $runtime_dir
@@ -63,7 +74,7 @@ cat > "$runtime_dir/smb.conf" <<EOF
   path = $share_dir
   read only = no
   guest ok = yes
-  force user = root
+  force user = $guest_user
   browseable = yes
 EOF
 

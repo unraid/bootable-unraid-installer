@@ -221,21 +221,23 @@ start_recovery_restore() {
 recovery_menu() {
     local choice=""
 
-    if [[ "$ui_backend" == "text" ]]; then
-        choice="$(ui_hotkey_select "Recovery" "Select a recovery action" A "Reset password" B "Start SMB Backup Share" C "Restore boot backup" D "Back")"
-    else
-        choice="$(ui_menu "Recovery" "Select a recovery action" A "Reset password" B "Start SMB Backup Share" C "Restore boot backup" D "Back")" || return 0
-    fi
-    choice="${choice//$'\r'/}"
-    choice="${choice//[[:space:]]/}"
-    choice="${choice^^}"
+    while true; do
+        if [[ "$ui_backend" == "text" ]]; then
+            choice="$(ui_hotkey_select "Recovery" "Select a recovery action" A "Reset password" B "Start SMB Backup Share" C "Restore boot backup" D "Back")"
+        else
+            choice="$(ui_menu "Recovery" "Select a recovery action" A "Reset password" B "Start SMB Backup Share" C "Restore boot backup" D "Back")" || return 0
+        fi
+        choice="${choice//$'\r'/}"
+        choice="${choice//[[:space:]]/}"
+        choice="${choice^^}"
 
-    case "$choice" in
-        A) reset_unraid_password ;;
-        B) start_recovery_smb ;;
-        C) start_recovery_restore ;;
-        *) ;;
-    esac
+        case "$choice" in
+            A) reset_unraid_password ;;
+            B) start_recovery_smb ;;
+            C) start_recovery_restore ;;
+            *) return 0 ;;
+        esac
+    done
 }
 
 detect_ui_backend
