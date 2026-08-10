@@ -20,7 +20,7 @@ backup_file=""
 
 select_backup() {
     local -a menu_args=()
-    local file choice=1 list_file
+    local file choice=1 list_file backup_count
     list_file="$(mktemp /tmp/unraid-recovery-backups.XXXXXX)"
     (
         shopt -s nullglob nocaseglob
@@ -35,12 +35,14 @@ select_backup() {
     done < "$list_file"
     rm -f "$list_file"
     [[ ${#menu_args[@]} -gt 0 ]] || return 1
+    backup_count=$(( ${#menu_args[@]} / 2 ))
     if [[ "$ui_backend" == "text" ]]; then
         choice="$(ui_hotkey_select "Restore Boot Backup" "Select uploaded backup" "${menu_args[@]}")" || return 1
     else
         choice="$(ui_menu "Restore Boot Backup" "Select uploaded backup" "${menu_args[@]}")" || return 1
     fi
     [[ "$choice" =~ ^[0-9]+$ ]] || return 1
+    (( choice >= 1 && choice <= backup_count )) || return 1
     backup_file="${menu_args[$(( (choice - 1) * 2 + 1 ))]}"
     backup_file="$backup_dir/$backup_file"
 }

@@ -766,6 +766,10 @@ if [[ -n "$RESTORE_BACKUP" ]]; then
         error_msg "ERROR: restore backup contains unsafe paths."
         exit 1
     fi
+    if unzip -Z -l "$ZIP_FILE" | awk 'NR > 3 && $1 ~ /^l/ { found = 1 } END { exit !found }'; then
+        error_msg "ERROR: restore backup contains symbolic links."
+        exit 1
+    fi
     status_msg "Using restore backup: $ZIP_FILE"
 elif compgen -G "${ZIP_DIR}/unRAIDServer-*-x86_64.zip" > /dev/null; then
     ZIP_FILE="$(find "$ZIP_DIR" -maxdepth 1 -type f -name 'unRAIDServer-*-x86_64.zip' -print | sort -V | tail -n1)"

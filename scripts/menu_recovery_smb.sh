@@ -47,6 +47,7 @@ fi
 mkdir -p /run/samba/ncalrpc "$share_dir" "$runtime_dir"
 chmod 0700 /run/samba/ncalrpc
 chmod 0700 "$share_dir"
+chmod 0700 "$runtime_dir"
 if [[ -d "$installer_zip_dir" ]] && ! find "$installer_zip_dir" -maxdepth 1 -type f -iname '*.zip' -delete; then
     ui_msg "SMB Backup Share" "Unable to remove installer ZIPs from $installer_zip_dir."
     exit 1
