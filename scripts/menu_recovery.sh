@@ -50,6 +50,8 @@ reset_unraid_password() {
     local boot_mountpoint=""
     local resolved_mount_root=""
     local resolved_config_dir=""
+    local shadow_file=""
+    local shadow_tmp=""
 
     if ! command -v zpool >/dev/null 2>&1 || ! command -v zfs >/dev/null 2>&1; then
         ui_msg "Password Reset" "ZFS tools are not available in this image."
@@ -61,7 +63,7 @@ reset_unraid_password() {
         return 1
     fi
 
-    if ! ui_confirm "Reset Password" "This removes config/passwd and config/shadow from the '$pool_name' boot pool. The next Unraid boot will require a new root password. Continue?"; then
+    if ! ui_confirm "Reset Password" "This clears only the root password in the '$pool_name' boot pool. Other users and SMB passwords are preserved. Continue?"; then
         return 0
     fi
 
@@ -126,22 +128,37 @@ reset_unraid_password() {
     fi
     config_dir="$resolved_config_dir"
 
-    recovery_status "Before deletion (ls -l): $(ls -l -- "$config_dir/passwd" "$config_dir/shadow" 2>&1)"
-    recovery_status "Deleting config/passwd and config/shadow from '$config_dir'..."
-    if ! rm -f -- "$config_dir/passwd" "$config_dir/shadow"; then
-        zpool export "$pool_name" >/dev/null 2>&1 || true
-        rmdir "$mount_root" 2>/dev/null || true
-        ui_msg "Password Reset" "Unable to remove the saved password files."
-        return 1
-    fi
-
-    recovery_status "After deletion (ls -l): $(ls -l -- "$config_dir/passwd" "$config_dir/shadow" 2>&1)"
-    recovery_status "Verifying password files are absent..."
-    if [[ -e "$config_dir/passwd" || -e "$config_dir/shadow" ]]; then
-        zpool export "$pool_name" >/dev/null 2>&1 || true
-        rmdir "$mount_root" 2>/dev/null || true
-        ui_msg "Password Reset" "The password files are still present in the config directory."
-        return 1
+    shadow_file="$config_dir/shadow"
+    if [[ -f "$shadow_file" ]]; then
+        if ! grep -q '^root:' "$shadow_file"; then
+            zpool export "$pool_name" >/dev/null 2>&1 || true
+            rmdir "$mount_root" 2>/dev/null || true
+            ui_msg "Password Reset" "The saved shadow file does not contain a root entry."
+            return 1
+        fi
+        if ! shadow_tmp="$(mktemp "$config_dir/.shadow.XXXXXX")"; then
+            zpool export "$pool_name" >/dev/null 2>&1 || true
+            rmdir "$mount_root" 2>/dev/null || true
+            ui_msg "Password Reset" "Unable to create a temporary password-reset file."
+            return 1
+        fi
+        recovery_status "Clearing the root password in '$shadow_file'..."
+        if ! awk -F: 'BEGIN { OFS=FS } $1 == "root" { $2="" } { print }' "$shadow_file" > "$shadow_tmp" || ! mv -f -- "$shadow_tmp" "$shadow_file"; then
+            rm -f -- "$shadow_tmp"
+            zpool export "$pool_name" >/dev/null 2>&1 || true
+            rmdir "$mount_root" 2>/dev/null || true
+            ui_msg "Password Reset" "Unable to update the saved root password."
+            return 1
+        fi
+        shadow_tmp=""
+        if ! awk -F: '$1 == "root" { found=1; if ($2 != "") bad=1 } END { exit (!found || bad) }' "$shadow_file"; then
+            zpool export "$pool_name" >/dev/null 2>&1 || true
+            rmdir "$mount_root" 2>/dev/null || true
+            ui_msg "Password Reset" "The saved root password could not be cleared."
+            return 1
+        fi
+    else
+        recovery_status "No saved shadow file found; the root password is already unset."
     fi
 
     recovery_status "Syncing changes to '$pool_name'..."
@@ -154,18 +171,22 @@ reset_unraid_password() {
 
     recovery_status "Exporting ZFS boot pool '$pool_name'..."
     if ! zpool export "$pool_name"; then
-        ui_msg "Password Reset" "Password files were removed, but the '$pool_name' pool could not be exported. Export it before rebooting."
+        ui_msg "Password Reset" "The root password was reset, but the '$pool_name' pool could not be exported. Export it before rebooting."
         return 1
     fi
     rmdir "$mount_root" 2>/dev/null || true
     recovery_status "Password reset complete."
     ui_msg "Password Reset Complete" "$(recovery_log_text)
 
-Password files were removed successfully. You can now boot Unraid and set a new password."
+The root password was reset successfully. You can now boot Unraid and set a new password."
 }
 
 start_recovery_smb() {
     /bin/bash /boot/install/menu_recovery_smb.sh
+}
+
+start_recovery_smb_authenticated() {
+    /bin/bash /boot/install/menu_recovery_smb.sh --authenticated
 }
 
 start_recovery_restore() {
@@ -177,9 +198,9 @@ recovery_menu() {
 
     while true; do
         if [[ "$ui_backend" == "text" ]]; then
-            choice="$(ui_hotkey_select "Recovery" "Select a recovery action" A "Reset password" B "Start SMB Backup Share" C "Restore boot backup" D "Back")"
+            choice="$(ui_hotkey_select "Recovery" "Select a recovery action" A "Reset password" B "Start Guest SMB Backup Share" C "Start Authenticated SMB Backup Share" D "Restore boot backup" E "Back")"
         else
-            choice="$(ui_menu "Recovery" "Select a recovery action" A "Reset password" B "Start SMB Backup Share" C "Restore boot backup" D "Back")" || return 0
+            choice="$(ui_menu "Recovery" "Select a recovery action" A "Reset password" B "Start Guest SMB Backup Share" C "Start Authenticated SMB Backup Share" D "Restore boot backup" E "Back")" || return 0
         fi
         choice="${choice//$'\r'/}"
         choice="${choice//[[:space:]]/}"
@@ -188,7 +209,8 @@ recovery_menu() {
         case "$choice" in
             A) reset_unraid_password ;;
             B) start_recovery_smb ;;
-            C) start_recovery_restore ;;
+            C) start_recovery_smb_authenticated ;;
+            D) start_recovery_restore ;;
             *) return 0 ;;
         esac
     done

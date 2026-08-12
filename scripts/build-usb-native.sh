@@ -605,6 +605,7 @@ insmod search_fs_uuid
 
 if loadfont /boot/grub/themes/unraid/terminus-14.pf2 ; then
   set gfxmode=auto
+  set gfxpayload=keep
   terminal_output gfxterm
   set theme=/boot/grub/themes/unraid/theme.txt
   export theme

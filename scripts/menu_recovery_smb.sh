@@ -19,6 +19,16 @@ detect_ui_backend
 share_dir="/mnt/persist/recovery-backups"
 installer_zip_dir="/mnt/persist/zips"
 runtime_dir="/run/unraid-recovery-smb"
+share_mode="guest"
+
+case "${1:-}" in
+    "") ;;
+    --authenticated) share_mode="authenticated" ;;
+    *)
+        echo "Usage: $0 [--authenticated]" >&2
+        exit 1
+        ;;
+esac
 
 if ! mountpoint -q /mnt/persist; then
     ui_msg "SMB Backup Share" "Persistent storage is not mounted."
@@ -36,11 +46,18 @@ if [[ -z "$ip_address" ]]; then
 fi
 
 if [[ -f "$runtime_dir/smbd.pid" ]] && kill -0 "$(cat "$runtime_dir/smbd.pid")" 2>/dev/null; then
-    ui_msg "SMB Backup Share" "The backup share is already running.\n\nPath: \\\\$ip_address\\Unraid-Recovery\nFolder: $share_dir"
+    credentials=""
+    [[ -f "$runtime_dir/credentials" ]] && credentials="\n\n$(cat "$runtime_dir/credentials")"
+    ui_msg "SMB Backup Share" "The backup share is already running.\n\nPath: \\\\$ip_address\\Unraid-Recovery\nFolder: $share_dir$credentials"
     exit 0
 fi
 
-if ! ui_confirm "Enable SMB Backup Share" "Delete installer ZIPs from $installer_zip_dir and start a temporary guest-writable SMB share? Anyone on this network can write to it until the installer reboots."; then
+if [[ "$share_mode" == "authenticated" ]]; then
+    confirm_text="Delete installer ZIPs from $installer_zip_dir and start a temporary password-protected SMB share?"
+else
+    confirm_text="Delete installer ZIPs from $installer_zip_dir and start a temporary guest-writable SMB share? Anyone on this network can write to it until the installer reboots."
+fi
+if ! ui_confirm "Enable SMB Backup Share" "$confirm_text"; then
     exit 0
 fi
 
@@ -59,11 +76,34 @@ if ! chown nobody:nogroup "$share_dir" 2>/dev/null; then
     # by the unprivileged guest account.
     guest_user="root"
 fi
+
+auth_user="ur"
+auth_password=""
+if [[ "$share_mode" == "authenticated" ]]; then
+    if ! command -v useradd >/dev/null 2>&1 || ! command -v smbpasswd >/dev/null 2>&1; then
+        ui_msg "SMB Backup Share" "Authenticated SMB support is not available in this installer image."
+        exit 1
+    fi
+    if ! id "$auth_user" >/dev/null 2>&1; then
+        if ! useradd --system --no-create-home --shell /usr/sbin/nologin "$auth_user"; then
+            ui_msg "SMB Backup Share" "Unable to create the temporary SMB account."
+            exit 1
+        fi
+    fi
+    auth_password="ur"
+    global_access_config="  map to guest = Never
+  passdb backend = tdbsam"
+    share_access_config="  guest ok = no
+  valid users = $auth_user"
+else
+    global_access_config="  map to guest = Bad User
+  guest account = $guest_user"
+    share_access_config="  guest ok = yes"
+fi
 cat > "$runtime_dir/smb.conf" <<EOF
 [global]
   security = user
-  map to guest = Bad User
-  guest account = $guest_user
+$global_access_config
   pid directory = $runtime_dir
   lock directory = $runtime_dir
   state directory = $runtime_dir
@@ -74,10 +114,20 @@ cat > "$runtime_dir/smb.conf" <<EOF
 [Unraid-Recovery]
   path = $share_dir
   read only = no
-  guest ok = yes
+$share_access_config
   force user = $guest_user
   browseable = yes
 EOF
+
+rm -f "$runtime_dir/credentials"
+if [[ "$share_mode" == "authenticated" ]]; then
+    if ! printf '%s\n%s\n' "$auth_password" "$auth_password" | smbpasswd -s -a -c "$runtime_dir/smb.conf" "$auth_user" >/dev/null; then
+        ui_msg "SMB Backup Share" "Unable to configure the temporary SMB account."
+        exit 1
+    fi
+    printf 'Username: %s\nPassword: %s\n' "$auth_user" "$auth_password" > "$runtime_dir/credentials"
+    chmod 0600 "$runtime_dir/credentials"
+fi
 
 smbd --foreground --no-process-group --configfile="$runtime_dir/smb.conf" >"$runtime_dir/smbd.log" 2>&1 &
 echo "$!" > "$runtime_dir/smbd.pid"
@@ -87,4 +137,8 @@ if ! kill -0 "$(cat "$runtime_dir/smbd.pid")" 2>/dev/null; then
     exit 1
 fi
 
-ui_msg "SMB Backup Share Enabled" "Copy the backup ZIP to:\n\n\\\\$ip_address\\Unraid-Recovery\n\nThis share permits guest uploads and remains available until this installer reboots."
+if [[ "$share_mode" == "authenticated" ]]; then
+    ui_msg "Authenticated SMB Backup Share Enabled" "Copy the backup ZIP to:\n\n\\\\$ip_address\\Unraid-Recovery\n\nUsername: $auth_user\nPassword: $auth_password\n\nThis temporary account remains available until this installer reboots."
+else
+    ui_msg "SMB Backup Share Enabled" "Copy the backup ZIP to:\n\n\\\\$ip_address\\Unraid-Recovery\n\nThis share permits guest uploads and remains available until this installer reboots."
+fi

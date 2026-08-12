@@ -633,6 +633,7 @@ apt install -y --no-install-recommends \
  parted \
  pciutils \
  php-cli \
+ passwd \
  samba \
  sed \
  udev \
@@ -2377,6 +2378,7 @@ if [ "\$root" = "memdisk" ] || [ "\$root" = "(memdisk)" ] || [ -z "\$root" ]; th
 fi
 if loadfont /boot/grub/themes/unraid/terminus-14.pf2 ; then
  set gfxmode=auto
+ set gfxpayload=keep
  terminal_output gfxterm
  set theme=/boot/grub/themes/unraid/theme.txt
  export theme
@@ -2445,6 +2447,7 @@ if [ "\$root" = "memdisk" ] || [ "\$root" = "(memdisk)" ] || [ -z "\$root" ]; th
 fi
 if loadfont /boot/grub/themes/unraid/terminus-14.pf2 ; then
  set gfxmode=auto
+ set gfxpayload=keep
  terminal_output gfxterm
  set theme=/boot/grub/themes/unraid/theme.txt
  export theme
@@ -2546,6 +2549,7 @@ insmod png
 
 if loadfont /boot/grub/themes/unraid/terminus-14.pf2 ; then
  set gfxmode=auto
+ set gfxpayload=keep
  terminal_output gfxterm
  set theme=/boot/grub/themes/unraid/theme.txt
  export theme
