@@ -1294,6 +1294,10 @@ mount -t tmpfs tmpfs /run
 mkdir -p /tmp
 mount -t tmpfs tmpfs /tmp
 
+if [ -w /dev/tty0 ]; then
+ printf '\033[2J\033[H\n  Internal Boot Setup\n\n  Loading installer environment...\n' > /dev/tty0 2>/dev/null || true
+fi
+
 init_boot_log_files
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export LD_LIBRARY_PATH=/usr/local/lib:/usr/local/lib64:${LD_LIBRARY_PATH:-}
@@ -2238,6 +2242,10 @@ apply_persistent_install_overrides() {
     if [ -f "$override_root/$file_name" ]; then
       override_sha256="$(persistent_override_sha256 "$override_root/$file_name")"
       cp -f "$override_root/$file_name" "$ONBOARDING_DIR/$file_name"
+      # Runtime overrides are often copied from Windows-managed FAT media.
+      # Normalize CRLF here so Bash does not interpret a trailing carriage
+      # return as part of a command name.
+      sed -i 's/\r$//' "$ONBOARDING_DIR/$file_name" 2>/dev/null || true
       case "$file_name" in
             install-profile)
           chmod 0644 "$ONBOARDING_DIR/$file_name" 2>/dev/null || true
@@ -2305,6 +2313,13 @@ launch_onboarding_target() {
  fi
 
  boot_log "launching onboarding menu"
+ # With deferred framebuffer-console takeover enabled, make the mode switch and
+ # terminal-size update complete before dialog/whiptail renders its first box.
+ if [ -w /dev/tty0 ]; then
+    printf '\033[2J\033[H' > /dev/tty0 2>/dev/null || true
+    sleep 1
+    printf '\033[2J\033[H' > /dev/tty0 2>/dev/null || true
+ fi
  if command -v cttyhack >/dev/null 2>&1; then
     cttyhack /bin/bash "$menu_script" || true
     return
@@ -2393,8 +2408,6 @@ else
 fi
 
 menuentry "Internal Boot Setup" {
- echo "Loading......"
- sleep 1
  linux (\$root)/boot/vmlinuz root=/dev/ram0 rw rdinit=/init loglevel=3 console=tty0 consoleblank=0${BOOT_PERSIST_KERNEL_ARGS}
  initrd (\$root)/boot/initrd
 }
@@ -2462,8 +2475,6 @@ else
 fi
 
 menuentry "Internal Boot Setup" {
- echo "Loading....."
- sleep 1
  linux (\$root)/boot/vmlinuz root=/dev/ram0 rw rdinit=/init loglevel=3 console=tty0 consoleblank=0
  initrd (\$root)/boot/initrd
 }
@@ -2564,8 +2575,6 @@ else
 fi
 
 menuentry "Internal Boot Setup" {
- echo "Loading....."
- sleep 1
  if [ -e (cd0,gpt1)/boot/vmlinuz ]; then
   set root=(cd0,gpt1)
  elif [ -e (cd0,msdos1)/boot/vmlinuz ]; then
