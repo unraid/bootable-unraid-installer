@@ -199,14 +199,18 @@ start_recovery_restore() {
     /bin/bash /boot/install/menu_recovery_restore.sh
 }
 
+start_recovery_restore_existing() {
+    /bin/bash /boot/install/menu_recovery_restore_existing.sh
+}
+
 recovery_menu() {
     local choice=""
 
     while true; do
         if [[ "$ui_backend" == "text" ]]; then
-            choice="$(ui_hotkey_select "Recovery" "Select a recovery action" A "Reset password" B "Start Guest SMB Backup Share" C "Start Authenticated SMB Backup Share" D "Restore boot backup" E "Back")"
+            choice="$(ui_hotkey_select "Recovery" "Select a recovery action" A "Reset password" B "Start Guest SMB Backup Share" C "Start Authenticated SMB Backup Share" D "Create Internal Boot from Backup" E "Restore Existing Internal Boot" F "Back")"
         else
-            choice="$(ui_menu "Recovery" "Select a recovery action" A "Reset password" B "Start Guest SMB Backup Share" C "Start Authenticated SMB Backup Share" D "Restore boot backup" E "Back")" || return 0
+            choice="$(ui_menu "Recovery" "Select a recovery action" A "Reset password" B "Start Guest SMB Backup Share" C "Start Authenticated SMB Backup Share" D "Create Internal Boot from Backup" E "Restore Existing Internal Boot" F "Back")" || return 0
         fi
         choice="${choice//$'\r'/}"
         choice="${choice//[[:space:]]/}"
@@ -217,6 +221,7 @@ recovery_menu() {
             B) start_recovery_smb ;;
             C) start_recovery_smb_authenticated ;;
             D) start_recovery_restore ;;
+            E) start_recovery_restore_existing ;;
             *) return 0 ;;
         esac
     done

@@ -67,6 +67,7 @@ CONFIG_SYSFB_SIMPLEFB=y
 CONFIG_DRM_SIMPLEDRM=y
 CONFIG_FB=y
 CONFIG_FRAMEBUFFER_CONSOLE=y
+CONFIG_FRAMEBUFFER_CONSOLE_DEFERRED_TAKEOVER=y
 CONFIG_FB_EFI=y
 CONFIG_PCI=y
 CONFIG_PCI_MSI=y
@@ -737,15 +738,20 @@ if [ "$MENU_UI" = "gui" ]; then
       echo "Missing required onboarding script: $SCRIPT_DIR/menu_recovery_restore.sh" >&2
       exit 1
    }
+    [ -f "$SCRIPT_DIR/menu_recovery_restore_existing.sh" ] || {
+      echo "Missing required onboarding script: $SCRIPT_DIR/menu_recovery_restore_existing.sh" >&2
+      exit 1
+   }
     sudo cp "$SCRIPT_DIR/menu_gui_common.sh" "$ONBOARDING_ASSET_DIR/menu_gui_common.sh"
    sudo cp "$SCRIPT_DIR/menu_gui_user.sh" "$ONBOARDING_ASSET_DIR/menu_gui_user.sh"
     sudo cp "$SCRIPT_DIR/menu_recovery.sh" "$ONBOARDING_ASSET_DIR/menu_recovery.sh"
     sudo cp "$SCRIPT_DIR/menu_recovery_smb.sh" "$ONBOARDING_ASSET_DIR/menu_recovery_smb.sh"
     sudo cp "$SCRIPT_DIR/menu_recovery_restore.sh" "$ONBOARDING_ASSET_DIR/menu_recovery_restore.sh"
+    sudo cp "$SCRIPT_DIR/menu_recovery_restore_existing.sh" "$ONBOARDING_ASSET_DIR/menu_recovery_restore_existing.sh"
     sudo chmod +x "$ONBOARDING_ASSET_DIR/menu_gui_common.sh"
    sudo chmod +x "$ONBOARDING_ASSET_DIR/menu_gui_user.sh"
     sudo chmod +x "$ONBOARDING_ASSET_DIR/menu_recovery.sh"
-    sudo chmod +x "$ONBOARDING_ASSET_DIR/menu_recovery_smb.sh" "$ONBOARDING_ASSET_DIR/menu_recovery_restore.sh"
+    sudo chmod +x "$ONBOARDING_ASSET_DIR/menu_recovery_smb.sh" "$ONBOARDING_ASSET_DIR/menu_recovery_restore.sh" "$ONBOARDING_ASSET_DIR/menu_recovery_restore_existing.sh"
 fi
 
 sudo cp "$SCRIPT_DIR/create_internal_boot_user.sh" "$ONBOARDING_ASSET_DIR/create_internal_boot.sh"
@@ -760,7 +766,7 @@ fi
 printf '%s\n' "$installer_version" | sudo tee "$ONBOARDING_ASSET_DIR/installer-version" >/dev/null
 sudo cp "$SCRIPT_DIR/menu_gui_common.sh" "$ONBOARDING_ASSET_DIR/menu_gui_common.sh"
 sudo cp "$SCRIPT_DIR/menu_gui_user.sh" "$ONBOARDING_ASSET_DIR/menu.sh"
-sudo chmod +x "$ONBOARDING_ASSET_DIR/menu.sh" "$ONBOARDING_ASSET_DIR/menu_gui_common.sh" "$ONBOARDING_ASSET_DIR/menu_recovery.sh" "$ONBOARDING_ASSET_DIR/menu_recovery_smb.sh" "$ONBOARDING_ASSET_DIR/menu_recovery_restore.sh" "$ONBOARDING_ASSET_DIR/create_internal_boot.sh" "$ONBOARDING_ASSET_DIR/create_flash_boot.sh" "$ONBOARDING_ASSET_DIR/zip.sh" "$ONBOARDING_ASSET_DIR/version_check.sh"
+sudo chmod +x "$ONBOARDING_ASSET_DIR/menu.sh" "$ONBOARDING_ASSET_DIR/menu_gui_common.sh" "$ONBOARDING_ASSET_DIR/menu_recovery.sh" "$ONBOARDING_ASSET_DIR/menu_recovery_smb.sh" "$ONBOARDING_ASSET_DIR/menu_recovery_restore.sh" "$ONBOARDING_ASSET_DIR/menu_recovery_restore_existing.sh" "$ONBOARDING_ASSET_DIR/create_internal_boot.sh" "$ONBOARDING_ASSET_DIR/create_flash_boot.sh" "$ONBOARDING_ASSET_DIR/zip.sh" "$ONBOARDING_ASSET_DIR/version_check.sh"
 
 if [ -n "$MENU_BACKEND_DEFAULT" ]; then
    printf '%s\n' "$MENU_BACKEND_DEFAULT" | sudo tee "$ONBOARDING_ASSET_DIR/menu-backend" >/dev/null
@@ -1229,8 +1235,6 @@ sudo depmod -a -b "$ROOTFS" "$KERNEL_RELEASE"
 
 sudo tee "$ROOTFS/init" <<'EOF' >/dev/null
 #!/bin/bash
-
-printf 'Loading......\n' > /dev/console 2>/dev/null || printf 'Loading......\n'
 
 boot_log() {
  local message="$*"
@@ -2196,6 +2200,7 @@ apply_persistent_install_overrides() {
     menu_recovery.sh \
     menu_recovery_smb.sh \
     menu_recovery_restore.sh \
+    menu_recovery_restore_existing.sh \
     menu_gui.sh \
     create_internal_boot.sh \
     create_flash_boot.sh \
@@ -2223,6 +2228,7 @@ apply_persistent_install_overrides() {
     menu_recovery.sh \
     menu_recovery_smb.sh \
     menu_recovery_restore.sh \
+    menu_recovery_restore_existing.sh \
     menu_gui.sh \
     create_internal_boot.sh \
     create_flash_boot.sh \
