@@ -129,6 +129,12 @@ reset_unraid_password() {
     config_dir="$resolved_config_dir"
 
     shadow_file="$config_dir/shadow"
+    if [[ -L "$shadow_file" ]]; then
+        zpool export "$pool_name" >/dev/null 2>&1 || true
+        rmdir "$mount_root" 2>/dev/null || true
+        ui_msg "Password Reset" "The saved shadow file is a symbolic link. Refusing to modify it."
+        return 1
+    fi
     if [[ -f "$shadow_file" ]]; then
         if ! grep -q '^root:' "$shadow_file"; then
             zpool export "$pool_name" >/dev/null 2>&1 || true
