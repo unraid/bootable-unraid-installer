@@ -141,6 +141,17 @@ detect_ui_backend() {
     ui_backend="text"
 }
 
+configure_ui_colours() {
+    [[ "$ui_backend" == "whiptail" ]] || return
+    local theme
+    for theme in "${MENU_UI_THEME_LIB:-}" /boot/install/menu_ui_theme.sh /mnt/persist/runtime/menu_ui_theme.sh "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/menu_ui_theme.sh"; do
+        [[ -f "$theme" ]] || continue
+        . "$theme"
+        configure_whiptail_theme
+        return
+    done
+}
+
 ui_has_tty() {
     [[ -e /dev/tty ]] || return 1
     : </dev/tty >/dev/tty 2>/dev/null
@@ -722,6 +733,7 @@ ensure_zfs_runtime() {
 }
 
 detect_ui_backend
+configure_ui_colours
 init_run_log
 trap show_failure_log_on_exit EXIT
 

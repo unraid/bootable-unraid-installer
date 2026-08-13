@@ -83,6 +83,18 @@ detect_ui_backend() {
   ui_backend="text"
 }
 
+configure_ui_colours() {
+  [[ "$ui_backend" == "whiptail" ]] || return
+  local theme
+  for theme in "${MENU_UI_THEME_LIB:-}" /boot/install/menu_ui_theme.sh /mnt/persist/runtime/menu_ui_theme.sh "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/menu_ui_theme.sh"; do
+    [[ -f "$theme" ]] || continue
+    # shellcheck disable=SC1090
+    . "$theme"
+    configure_whiptail_theme
+    return
+  done
+}
+
 ui_prompt() {
   local title="$1" prompt="$2" default_value="${3:-}"
 
@@ -319,6 +331,7 @@ if [[ -n "$EXPECTED_SHA256" && ! "$EXPECTED_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
 fi
 
 detect_ui_backend
+configure_ui_colours
 
 if [[ -n "$ZIP_DIR_OVERRIDE" ]]; then
   ZIP_DIR="$ZIP_DIR_OVERRIDE"

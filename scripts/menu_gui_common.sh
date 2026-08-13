@@ -1,5 +1,13 @@
 #!/bin/bash
 
+MENU_UI_THEME_PATH=""
+for candidate in "${MENU_UI_THEME_LIB:-}" "/boot/install/menu_ui_theme.sh" "/mnt/persist/runtime/menu_ui_theme.sh" "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/menu_ui_theme.sh"; do
+    [[ -f "$candidate" ]] || continue
+    MENU_UI_THEME_PATH="$candidate"
+    break
+done
+[[ -n "$MENU_UI_THEME_PATH" ]] && . "$MENU_UI_THEME_PATH"
+
 format_boot_size_label() {
     if (( INTERNAL_BOOT_SIZE_MIB == 0 )); then
         printf '%s\n' "Dedicated"
@@ -169,6 +177,43 @@ detect_ui_backend() {
         return
     fi
     ui_backend="text"
+}
+
+configure_menu_colours() {
+    case "$ui_backend" in
+        dialog)
+            DIALOGRC="/run/unraid-dialogrc"
+            export DIALOGRC
+            cat > "$DIALOGRC" <<'EOF'
+use_shadow = OFF
+use_colors = ON
+screen_color = (WHITE,BLACK,OFF)
+dialog_color = (BLACK,WHITE,OFF)
+title_color = (RED,BLACK,OFF)
+border_color = (WHITE,BLACK,OFF)
+button_active_color = (WHITE,RED,ON)
+button_inactive_color = (BLACK,WHITE,OFF)
+button_key_active_color = (WHITE,RED,ON)
+button_key_inactive_color = (BLACK,WHITE,OFF)
+button_label_active_color = (WHITE,RED,ON)
+button_label_inactive_color = (BLACK,WHITE,OFF)
+inputbox_color = (BLACK,WHITE,OFF)
+inputbox_border_color = (BLACK,WHITE,OFF)
+position_indicator_color = (BLACK,WHITE,OFF)
+menubox_color = (BLACK,WHITE,OFF)
+menubox_border_color = (BLACK,WHITE,OFF)
+item_color = (BLACK,WHITE,OFF)
+item_selected_color = (WHITE,RED,ON)
+tag_color = (RED,WHITE,OFF)
+tag_selected_color = (WHITE,RED,ON)
+uarrow_color = (BLACK,WHITE,OFF)
+darrow_color = (BLACK,WHITE,OFF)
+EOF
+            ;;
+        whiptail)
+            declare -F configure_whiptail_theme >/dev/null && configure_whiptail_theme
+            ;;
+    esac
 }
 
 ui_prompt() {
