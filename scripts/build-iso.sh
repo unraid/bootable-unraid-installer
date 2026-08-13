@@ -2408,6 +2408,7 @@ else
 fi
 
 menuentry "Internal Boot Setup" {
+ echo "Loading installer environment..."
  linux (\$root)/boot/vmlinuz root=/dev/ram0 rw rdinit=/init loglevel=3 console=tty0 consoleblank=0${BOOT_PERSIST_KERNEL_ARGS}
  initrd (\$root)/boot/initrd
 }
@@ -2475,6 +2476,7 @@ else
 fi
 
 menuentry "Internal Boot Setup" {
+ echo "Loading installer environment..."
  linux (\$root)/boot/vmlinuz root=/dev/ram0 rw rdinit=/init loglevel=3 console=tty0 consoleblank=0
  initrd (\$root)/boot/initrd
 }
@@ -2575,6 +2577,7 @@ else
 fi
 
 menuentry "Internal Boot Setup" {
+ echo "Loading installer environment..."
  if [ -e (cd0,gpt1)/boot/vmlinuz ]; then
   set root=(cd0,gpt1)
  elif [ -e (cd0,msdos1)/boot/vmlinuz ]; then
