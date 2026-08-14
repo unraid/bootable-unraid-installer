@@ -19,11 +19,40 @@ backup_dir="/mnt/persist/recovery-backups"
 pool_name="${RECOVERY_BOOT_POOL:-flash}"
 boot_dataset="${RECOVERY_BOOT_DATASET:-${pool_name}/boot}"
 backup_file=""
+selected_backup_file=""
+staged_backup=""
 mount_root=""
+pool_imported=0
+snapshot_name=""
+snapshot_created=0
+
+archive_contains_symlink() {
+    unzip -Z -v "$1" 2>/dev/null | awk '
+        /Unix file attributes \(/ {
+            attr=$0
+            sub(/^.*\(/, "", attr)
+            sub(/ octal\).*$/, "", attr)
+            if (attr ~ /^0?12[0-7][0-7][0-7][0-7]$/) {
+                found=1
+            }
+        }
+        END { exit(found ? 0 : 1) }
+    '
+}
 
 cleanup() {
-    [[ -n "$mount_root" ]] || return
-    zpool export "$pool_name" >/dev/null 2>&1 || true
+    if (( snapshot_created && pool_imported )); then
+        zfs unmount "$boot_dataset" >/dev/null 2>&1 || true
+        if zfs rollback "$snapshot_name" >/dev/null 2>&1; then
+            zfs destroy "$snapshot_name" >/dev/null 2>&1 || true
+            snapshot_created=0
+        fi
+    fi
+    if (( pool_imported )); then
+        zpool export "$pool_name" >/dev/null 2>&1 || true
+        pool_imported=0
+    fi
+    [[ -n "$staged_backup" ]] && rm -f -- "$staged_backup"
     rmdir "$mount_root" 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -63,7 +92,7 @@ validate_backup() {
     unzip -Z1 "$backup_file" | grep -qx 'config/' || return 1
     unzip -Z1 "$backup_file" | grep -qx 'bzimage' || return 1
     ! unzip -Z1 "$backup_file" | grep -Eq '(^/|(^|/)\.\.(/|$))' || return 1
-    ! unzip -Z -l "$backup_file" | awk 'NR > 3 && $1 ~ /^l/ { found = 1 } END { exit !found }'
+    ! archive_contains_symlink "$backup_file"
 }
 
 if ! mountpoint -q /mnt/persist; then
@@ -82,11 +111,23 @@ if ! select_backup; then
     ui_msg "Restore Existing Internal Boot" "No backup ZIP was selected from $backup_dir."
     exit 0
 fi
+
+selected_backup_file="$backup_file"
+staged_backup="$(mktemp /run/unraid-restore-backup.XXXXXX)"
+rm -f -- "$staged_backup"
+if ! cp -P -- "$selected_backup_file" "$staged_backup" || [[ ! -f "$staged_backup" || -L "$staged_backup" ]]; then
+    rm -f -- "$staged_backup"
+    staged_backup=""
+    ui_msg "Restore Existing Internal Boot" "Unable to safely stage the selected backup ZIP."
+    exit 1
+fi
+chmod 0600 "$staged_backup"
+backup_file="$staged_backup"
 if ! validate_backup; then
     ui_msg "Restore Existing Internal Boot" "The selected ZIP is invalid, unsafe, or does not contain config/ and bzimage."
     exit 1
 fi
-if ! ui_confirm "Restore Existing Internal Boot" "This replaces all files in the existing '$boot_dataset' boot filesystem with '$backup_file'.\n\nThe disk partition table and user-data partition p4 are not modified. Continue?"; then
+if ! ui_confirm "Restore Existing Internal Boot" "This replaces all files in the existing '$boot_dataset' boot filesystem with '$selected_backup_file'.\n\nThe disk partition table and user-data partition p4 are not modified. Continue?"; then
     exit 0
 fi
 
@@ -95,6 +136,7 @@ if ! zpool import -N -R "$mount_root" "$pool_name"; then
     ui_msg "Restore Existing Internal Boot" "Unable to import ZFS boot pool '$pool_name'. Ensure the target boot device is connected and not in use."
     exit 1
 fi
+pool_imported=1
 if ! zfs list -H -o name "$boot_dataset" >/dev/null 2>&1 || ! zfs mount "$boot_dataset"; then
     ui_msg "Restore Existing Internal Boot" "Unable to mount the '$boot_dataset' boot filesystem."
     exit 1
@@ -105,6 +147,13 @@ if [[ -z "$boot_mountpoint" || "$boot_mountpoint" != "$mount_root"/* || ! -d "$b
     exit 1
 fi
 
+snapshot_name="${boot_dataset}@unraid-restore-${BASHPID}"
+if ! zfs snapshot "$snapshot_name"; then
+    ui_msg "Restore Existing Internal Boot" "Unable to create a rollback snapshot for '$boot_dataset'."
+    exit 1
+fi
+snapshot_created=1
+
 if ! find "$boot_mountpoint" -mindepth 1 -xdev -delete; then
     ui_msg "Restore Existing Internal Boot" "Unable to clear the existing boot filesystem."
     exit 1
@@ -113,8 +162,22 @@ if ! unzip -o "$backup_file" -d "$boot_mountpoint" >/dev/null; then
     ui_msg "Restore Existing Internal Boot" "Unable to extract the backup ZIP to the boot filesystem."
     exit 1
 fi
-sync
-zpool export "$pool_name"
+if ! sync; then
+    ui_msg "Restore Existing Internal Boot" "Unable to sync the restored boot filesystem."
+    exit 1
+fi
+if ! zfs destroy "$snapshot_name"; then
+    ui_msg "Restore Existing Internal Boot" "Unable to remove the restore rollback snapshot."
+    exit 1
+fi
+snapshot_created=0
+if ! zpool export "$pool_name"; then
+    ui_msg "Restore Existing Internal Boot" "The restore completed, but the '$pool_name' pool could not be exported. Export it before rebooting."
+    exit 1
+fi
+pool_imported=0
+rm -f -- "$staged_backup"
+staged_backup=""
 rmdir "$mount_root" 2>/dev/null || true
 mount_root=""
 ui_msg "Restore Complete" "Backup restored to the existing internal boot filesystem. The partition table and p4 user-data partition were not modified."

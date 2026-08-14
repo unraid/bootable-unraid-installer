@@ -2245,7 +2245,11 @@ apply_persistent_install_overrides() {
       # Runtime overrides are often copied from Windows-managed FAT media.
       # Normalize CRLF here so Bash does not interpret a trailing carriage
       # return as part of a command name.
-      sed -i 's/\r$//' "$ONBOARDING_DIR/$file_name" 2>/dev/null || true
+      if ! sed -i 's/\r$//' "$ONBOARDING_DIR/$file_name"; then
+        boot_log "ERROR: failed to normalize runtime override: $file_name"
+        rm -f "$ONBOARDING_DIR/$file_name"
+        exit 1
+      fi
       case "$file_name" in
             install-profile)
           chmod 0644 "$ONBOARDING_DIR/$file_name" 2>/dev/null || true

@@ -14,6 +14,8 @@ ui_calc_dims() {
 
     rows="$(tput lines 2>/dev/null || echo 24)"
     cols="$(tput cols 2>/dev/null || echo 80)"
+    [[ "$rows" =~ ^[0-9]+$ ]] || rows=24
+    [[ "$cols" =~ ^[0-9]+$ ]] || cols=80
 
     (( rows < 20 )) && rows=20
     (( cols < 70 )) && cols=70
@@ -230,14 +232,23 @@ ui_menu_with_brand() {
     local rows cols logo_width logo_height logo_x menu_x menu_y menu_width menu_height list_height out rc
     shift 2
 
+    rows="$(tput lines 2>/dev/null || echo 24)"
+    cols="$(tput cols 2>/dev/null || echo 80)"
+
     if [[ "$ui_backend" != "dialog" ]]; then
         if [[ "$ui_backend" == "whiptail" ]]; then
-            local h w list_h terminal_rows
-            # Reserve enough vertical space for the complete banner, prompt,
-            # and menu entries.  A short fixed box clips the banner in Newt.
-            terminal_rows="$(tput lines 2>/dev/null || echo 24)"
-            h=$((terminal_rows - 4))
-            (( h < 28 )) && h=28
+            local h w list_h
+            # The branded prompt needs additional rows.  On smaller terminals
+            # use the normal menu so rendering cannot fail or be mistaken for
+            # a Back selection by callers.
+            if (( rows < 28 || cols < 96 )); then
+                if ui_menu "$title" "$prompt" "$@"; then
+                    return
+                fi
+                ui_hotkey_select "$title" "$prompt" "$@"
+                return
+            fi
+            h=$((rows - 4))
             (( h > 36 )) && h=36
             w=90
             list_h=12
@@ -251,18 +262,24 @@ ui_menu_with_brand() {
         return
     fi
 
-    rows="$(tput lines 2>/dev/null || echo 24)"
-    cols="$(tput cols 2>/dev/null || echo 80)"
-    logo_width=36
+    # The logo and menu are separate Dialog widgets.  Fall back before the
+    # widgets would overlap or extend beyond the terminal.
+    if (( rows < 31 || cols < 108 )); then
+        if ui_menu "$title" "$prompt" "$@"; then
+            return
+        fi
+        ui_hotkey_select "$title" "$prompt" "$@"
+        return
+    fi
+    logo_width=42
     logo_height=10
     menu_width=100
     (( menu_width > cols - 8 )) && menu_width=$((cols - 8))
     (( menu_width < 70 )) && menu_width=70
     menu_height=$((rows - 13))
-    (( menu_height < 18 )) && menu_height=18
     (( menu_height > 28 )) && menu_height=28
     list_height=$((menu_height - 8))
-    (( list_height < 8 )) && list_height=8
+    (( list_height < 1 )) && list_height=1
     logo_x=$(((cols - logo_width) / 2))
     menu_x=$(((cols - menu_width) / 2))
     menu_y=11

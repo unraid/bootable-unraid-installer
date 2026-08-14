@@ -752,6 +752,20 @@ if [[ "${PERSIST_READY:-0}" != "1" ]]; then
     status_msg "Persistent storage is not mounted. Using in-memory ZIP path: ${ZIP_DIR}"
 fi
 
+archive_contains_symlink() {
+    unzip -Z -v "$1" 2>/dev/null | awk '
+        /Unix file attributes \(/ {
+            attr=$0
+            sub(/^.*\(/, "", attr)
+            sub(/ octal\).*$/, "", attr)
+            if (attr ~ /^0?12[0-7][0-7][0-7][0-7]$/) {
+                found=1
+            }
+        }
+        END { exit(found ? 0 : 1) }
+    '
+}
+
 if [[ -n "$RESTORE_BACKUP" ]]; then
     ZIP_FILE="$RESTORE_BACKUP"
     if [[ ! -f "$ZIP_FILE" ]]; then
@@ -766,7 +780,7 @@ if [[ -n "$RESTORE_BACKUP" ]]; then
         error_msg "ERROR: restore backup contains unsafe paths."
         exit 1
     fi
-    if unzip -Z -l "$ZIP_FILE" | awk 'NR > 3 && $1 ~ /^l/ { found = 1 } END { exit !found }'; then
+    if archive_contains_symlink "$ZIP_FILE"; then
         error_msg "ERROR: restore backup contains symbolic links."
         exit 1
     fi
