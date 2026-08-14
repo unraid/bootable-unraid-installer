@@ -122,7 +122,6 @@ main_menu_user() {
         zip_missing=1
         prompt+=$'\nPlease download a zip first'
     fi
-
     if [[ "$zip_missing" -eq 1 ]]; then
         create_internal_label="Create Internal Boot (download zip first)"
         create_flash_label="Create Flash Boot (download zip first)"
@@ -150,8 +149,8 @@ main_menu_user() {
         menu_args+=(F "$wifi_label")
     fi
 
-    if ! choice="$(ui_menu "Unraid ISO Installer" "$prompt" "${menu_args[@]}")"; then
-        choice="$(ui_hotkey_select "Unraid ISO Installer" "$prompt" "${menu_args[@]}")"
+    if ! choice="$(ui_menu_with_brand "Unraid ISO Installer" "$prompt" "${menu_args[@]}")"; then
+        choice="$(ui_hotkey_select "Unraid ISO Installer" "$(ui_brand_banner)"$'\n'"$prompt" "${menu_args[@]}")"
     fi
     choice="${choice//$'\r'/}"
     choice="${choice//[[:space:]]/}"

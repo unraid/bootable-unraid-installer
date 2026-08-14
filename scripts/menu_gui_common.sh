@@ -171,6 +171,111 @@ detect_ui_backend() {
     ui_backend="text"
 }
 
+ui_brand_banner() {
+    local cols width indent
+
+    cols="${UI_BRAND_COLS:-$(tput cols 2>/dev/null || echo 80)}"
+    width=$((cols - 6))
+    (( width > 180 )) && width=180
+    (( width < 70 )) && width=70
+    indent=$(((width - 42) / 2))
+    (( indent < 0 )) && indent=0
+
+    brand_line() {
+        printf '%*s|%-40s|\n' "$indent" '' "$1"
+    }
+
+    printf '%*s%s\n' "$indent" '' '+----------------------------------------+'
+    brand_line '                            |'
+    brand_line '                        |      |'
+    brand_line '    |               |   |      |   |'
+    brand_line '    |               |              |'
+    brand_line '    |   |       |   |              |'
+    brand_line '        |       |'
+    brand_line '            |'
+    brand_line '              U N R A I D'
+    printf '%*s%s\n' "$indent" '' '+----------------------------------------+'
+}
+
+ui_center_text() {
+    local text="$1"
+    local width="${2:-84}"
+    local line length padding
+
+    while IFS= read -r line; do
+        length=${#line}
+        padding=$(( (width - length) / 2 ))
+        (( padding < 0 )) && padding=0
+        printf '%*s%s\n' "$padding" '' "$line"
+    done <<< "$text"
+}
+
+ui_brand_logo() {
+    cat <<'EOF'
+                            |
+                        |       |
+    |               |   |       |   |
+    |               |               |
+    |   |       |   |               |
+        |       |
+            |
+
+               U N R A I D
+EOF
+}
+
+ui_menu_with_brand() {
+    local title="$1"
+    local prompt="$2"
+    local rows cols logo_width logo_height logo_x menu_x menu_y menu_width menu_height list_height out rc
+    shift 2
+
+    if [[ "$ui_backend" != "dialog" ]]; then
+        if [[ "$ui_backend" == "whiptail" ]]; then
+            local h w list_h terminal_rows
+            # Reserve enough vertical space for the complete banner, prompt,
+            # and menu entries.  A short fixed box clips the banner in Newt.
+            terminal_rows="$(tput lines 2>/dev/null || echo 24)"
+            h=$((terminal_rows - 4))
+            (( h < 28 )) && h=28
+            (( h > 36 )) && h=36
+            w=90
+            list_h=12
+            # Whiptail reserves a few columns inside the 90-column box.
+            # Use its effective content width so the logo is truly centred.
+            UI_BRAND_COLS=90
+            whiptail --title "$title" --menu "$(ui_brand_banner)"$'\n'"$prompt" "$h" "$w" "$list_h" "$@" 3>&1 1>&2 2>&3
+            return
+        fi
+        ui_menu "$title" "$(ui_brand_banner)"$'\n'"$prompt" "$@"
+        return
+    fi
+
+    rows="$(tput lines 2>/dev/null || echo 24)"
+    cols="$(tput cols 2>/dev/null || echo 80)"
+    logo_width=36
+    logo_height=10
+    menu_width=100
+    (( menu_width > cols - 8 )) && menu_width=$((cols - 8))
+    (( menu_width < 70 )) && menu_width=70
+    menu_height=$((rows - 13))
+    (( menu_height < 18 )) && menu_height=18
+    (( menu_height > 28 )) && menu_height=28
+    list_height=$((menu_height - 8))
+    (( list_height < 8 )) && list_height=8
+    logo_x=$(((cols - logo_width) / 2))
+    menu_x=$(((cols - menu_width) / 2))
+    menu_y=11
+
+    out="$(dialog --stdout \
+        --begin 1 "$logo_x" --title "UNRAID" --infobox "$(ui_brand_logo)" "$logo_height" "$logo_width" \
+        --and-widget \
+        --begin "$menu_y" "$menu_x" --title "$title" --menu "$prompt" "$menu_height" "$menu_width" "$list_height" "$@")"
+    rc=$?
+    [[ $rc -eq 0 ]] || return "$rc"
+    printf '%s\n' "$out"
+}
+
 ui_prompt() {
     local title="$1"
     local prompt="$2"
