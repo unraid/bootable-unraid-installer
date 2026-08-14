@@ -160,10 +160,10 @@ ui_msg() {
 
     case "$ui_backend" in
         whiptail)
-            run_ui_cmd whiptail --title "$title" --msgbox "$message" 16 100
+            run_ui_cmd whiptail --title "$title" --msgbox "$message" 12 80
             ;;
         dialog)
-            run_ui_cmd dialog --title "$title" --msgbox "$message" 16 100
+            run_ui_cmd dialog --title "$title" --msgbox "$message" 12 80
             clear
             ;;
         *)
@@ -192,10 +192,10 @@ ui_view_log() {
 
     case "$ui_backend" in
         whiptail)
-            run_ui_cmd whiptail --title "$title" --scrolltext --textbox "$log_file" 30 120
+            run_ui_cmd whiptail --title "$title" --scrolltext --textbox "$log_file" 20 80
             ;;
         dialog)
-            run_ui_cmd dialog --title "$title" --textbox "$log_file" 30 120
+            run_ui_cmd dialog --title "$title" --textbox "$log_file" 20 80
             clear
             ;;
         *)
@@ -205,6 +205,7 @@ ui_view_log() {
 }
 
 RUN_LOG_FILE=""
+ERROR_SHOWN=0
 STEP_COUNT=0
 TOTAL_STEPS=8
 
@@ -241,16 +242,28 @@ error_msg() {
     if [[ "$ui_backend" != "text" ]]; then
         append_run_log "$message"
         ui_msg "Flash Boot Error" "$message"
+        if [[ "$ERROR_SHOWN" -eq 0 && -s "$RUN_LOG_FILE" ]]; then
+            ERROR_SHOWN=1
+            ui_view_log "Flash Boot Operation Log" "$RUN_LOG_FILE"
+        fi
     else
         echo "$message"
     fi
 }
 
 run_operation() {
+    local command_text="$*"
+
     if [[ "$ui_backend" != "text" ]]; then
-        "$@" >>"$RUN_LOG_FILE" 2>&1
+        if ! "$@" >>"$RUN_LOG_FILE" 2>&1; then
+            error_msg "ERROR: command failed: $command_text"
+            return 1
+        fi
     else
-        "$@"
+        if ! "$@"; then
+            error_msg "ERROR: command failed: $command_text"
+            return 1
+        fi
     fi
 }
 
@@ -354,6 +367,8 @@ require_cmd mount
 require_cmd umount
 require_cmd sync
 require_cmd id
+require_cmd cp
+require_cmd mcopy
 
 ZIP_ROOT="${PERSISTENT_ROOT:-/mnt/persist}"
 ZIP_DIR="${PERSISTENT_ZIP_DIR:-${ZIP_ROOT}/zips}"
@@ -471,13 +486,27 @@ else
 fi
 
 mount_dir=""
+ZIP_STAGE_FILE=""
 cleanup() {
     if [[ -n "$mount_dir" && -d "$mount_dir" ]]; then
         run_operation umount "$mount_dir" || true
         run_operation rmdir "$mount_dir" || true
     fi
+    [[ -n "$ZIP_STAGE_FILE" ]] && rm -f -- "$ZIP_STAGE_FILE"
 }
 trap cleanup EXIT
+
+if ! ZIP_STAGE_FILE="$(mktemp /run/create-flash-boot.XXXXXX.zip 2>/dev/null || mktemp /tmp/create-flash-boot.XXXXXX.zip)" || [[ -z "$ZIP_STAGE_FILE" ]]; then
+    error_msg "ERROR: unable to allocate memory for the installer ZIP before formatting the target."
+    exit 1
+fi
+if ! cp -f -- "$ZIP_FILE" "$ZIP_STAGE_FILE"; then
+    error_msg "ERROR: unable to stage the installer ZIP before formatting the target."
+    exit 1
+fi
+chmod 0600 "$ZIP_STAGE_FILE"
+ZIP_FILE="$ZIP_STAGE_FILE"
+status_msg "Loading installer ZIP into RAM before formatting the target"
 
 step_update "Unmounting existing target partitions"
 lsblk_parts_file="$(mktemp)"
@@ -531,9 +560,19 @@ else
 fi
 
 if [[ "$ui_backend" != "text" ]]; then
-    printf '%s\n' "$UEFI_ANSWER" | bash "$MAKE_BOOTABLE" >>"$RUN_LOG_FILE" 2>&1
+    MAKE_BOOTABLE_DIR="$(dirname "$MAKE_BOOTABLE")"
+    MAKE_BOOTABLE_NAME="$(basename "$MAKE_BOOTABLE")"
+    if ! (cd "$MAKE_BOOTABLE_DIR" && printf '%s\n' "$UEFI_ANSWER" | bash "./$MAKE_BOOTABLE_NAME") >>"$RUN_LOG_FILE" 2>&1; then
+        error_msg "ERROR: make_bootable_linux failed."
+        exit 1
+    fi
 else
-    printf '%s\n' "$UEFI_ANSWER" | bash "$MAKE_BOOTABLE"
+    MAKE_BOOTABLE_DIR="$(dirname "$MAKE_BOOTABLE")"
+    MAKE_BOOTABLE_NAME="$(basename "$MAKE_BOOTABLE")"
+    if ! (cd "$MAKE_BOOTABLE_DIR" && printf '%s\n' "$UEFI_ANSWER" | bash "./$MAKE_BOOTABLE_NAME"); then
+        error_msg "ERROR: make_bootable_linux failed."
+        exit 1
+    fi
 fi
 run_operation sync
 

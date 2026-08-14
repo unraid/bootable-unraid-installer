@@ -626,6 +626,7 @@ apt install -y --no-install-recommends \
  iw \
  iproute2 \
  iputils-ping \
+ mtools \
  network-manager \
  busybox \
  dialog \
