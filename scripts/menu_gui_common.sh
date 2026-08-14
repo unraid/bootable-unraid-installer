@@ -230,7 +230,9 @@ ui_menu_with_brand() {
     local title="$1"
     local prompt="$2"
     local rows cols logo_width logo_height logo_x menu_x menu_y menu_width menu_height list_height out rc
+    local entry_count prompt_lines available_list_height
     shift 2
+    entry_count=$(( $# / 2 ))
 
     rows="$(tput lines 2>/dev/null || echo 24)"
     cols="$(tput cols 2>/dev/null || echo 80)"
@@ -251,7 +253,17 @@ ui_menu_with_brand() {
             h=$((rows - 4))
             (( h > 36 )) && h=36
             w=90
-            list_h=12
+            prompt_lines=0
+            while IFS= read -r _; do
+                prompt_lines=$((prompt_lines + 1))
+            done <<< "$prompt"
+            # Ten lines are reserved by the banner and seven by the menu
+            # frame/buttons. Leave the remaining rows for menu entries.
+            available_list_height=$((h - 10 - prompt_lines - 7))
+            (( available_list_height < 1 )) && available_list_height=1
+            list_h=$entry_count
+            (( list_h > available_list_height )) && list_h=$available_list_height
+            (( list_h < 1 )) && list_h=1
             # Whiptail reserves a few columns inside the 90-column box.
             # Use its effective content width so the logo is truly centred.
             UI_BRAND_COLS=90
@@ -353,8 +365,9 @@ ui_confirm() {
 ui_menu() {
     local title="$1"
     local prompt="$2"
-    local h w list_h
+    local h w list_h entry_count
     shift 2
+    entry_count=$(( $# / 2 ))
 
     case "$ui_backend" in
         whiptail)
@@ -362,6 +375,8 @@ ui_menu() {
             h="$UI_DIM_1"
             w="$UI_DIM_2"
             list_h="$UI_DIM_3"
+            (( list_h > entry_count )) && list_h=$entry_count
+            (( list_h < 1 )) && list_h=1
             whiptail --title "$title" --menu "$prompt" "$h" "$w" "$list_h" "$@" 3>&1 1>&2 2>&3
             ;;
         dialog)
@@ -370,6 +385,8 @@ ui_menu() {
             h="$UI_DIM_1"
             w="$UI_DIM_2"
             list_h="$UI_DIM_3"
+            (( list_h > entry_count )) && list_h=$entry_count
+            (( list_h < 1 )) && list_h=1
             out="$(dialog --stdout --title "$title" --menu "$prompt" "$h" "$w" "$list_h" "$@")"
             local rc=$?
             [[ $rc -eq 0 ]] || return "$rc"
