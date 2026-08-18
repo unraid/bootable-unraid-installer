@@ -208,9 +208,9 @@ recovery_menu() {
 
     while true; do
         if [[ "$ui_backend" == "text" ]]; then
-            choice="$(ui_hotkey_select "Recovery" "$(ui_brand_banner)"$'\n'"$prompt" A "Reset password" B "Start Guest SMB Backup Share" C "Start Authenticated SMB Backup Share" D "Create Internal Boot from Backup" E "Restore Existing Internal Boot" F "Back")"
+            choice="$(ui_hotkey_select "Recovery" "$(ui_brand_banner)"$'\n'"$prompt" A "Reset password" B "Start Guest SMB Backup Share" C "Start Authenticated SMB Backup Share" D "Create Boot from Backup (WIPE DISK)" E "Restore Boot Files (REPLACE CONFIG)" F "Back")"
         else
-            choice="$(ui_menu_with_brand "Recovery" "$prompt" A "Reset password" B "Start Guest SMB Backup Share" C "Start Authenticated SMB Backup Share" D "Create Internal Boot from Backup" E "Restore Existing Internal Boot" F "Back")" || return 0
+            choice="$(ui_menu_with_brand "Recovery" "$prompt" A "Reset password" B "Start Guest SMB Backup Share" C "Start Authenticated SMB Backup Share" D "Create Boot from Backup (WIPE DISK)" E "Restore Boot Files (REPLACE CONFIG)" F "Back")" || return 0
         fi
         choice="${choice//$'\r'/}"
         choice="${choice//[[:space:]]/}"

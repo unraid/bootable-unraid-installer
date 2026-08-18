@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ui_backend=""
-INTERNAL_BOOT_SIZE_MIB="${INTERNAL_BOOT_SIZE_MIB:-8192}"
+INTERNAL_BOOT_SIZE_MIB="${INTERNAL_BOOT_SIZE_MIB:-16384}"
 WIFI_MENU_ENABLED="${WIFI_MENU_ENABLED:-0}"
 
 SCRIPT_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -48,14 +48,16 @@ set_internal_boot_size() {
         B "8G (8192 MiB)" \
         C "16G (16384 MiB)" \
         D "32G (32768 MiB)" \
-        E "Custom")" || return 0
+        E "64G (65536 MiB)" \
+        F "Custom")" || return 0
 
     case "$choice" in
         A) INTERNAL_BOOT_SIZE_MIB=0 ;;
         B) INTERNAL_BOOT_SIZE_MIB=8192 ;;
         C) INTERNAL_BOOT_SIZE_MIB=16384 ;;
         D) INTERNAL_BOOT_SIZE_MIB=32768 ;;
-        E)
+        E) INTERNAL_BOOT_SIZE_MIB=65536 ;;
+        F)
             entered="$(ui_prompt "Internal Boot Size" "Enter custom size in MiB (enter 0 for dedicated auto with 1 MiB reserved for p4, or >=1024)" "$INTERNAL_BOOT_SIZE_MIB")"
             entered="${entered//[[:space:]]/}"
             [[ -n "$entered" ]] || return 0

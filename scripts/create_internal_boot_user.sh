@@ -10,8 +10,8 @@
 # Accepted arguments:
 #   $1 [$2]  Target disk device(s) (optional), for example: nvme1n1 or /dev/nvme1n1
 #            If omitted, the script prompts interactively for disk selection.
-#   --size SIZE_MIB (optional), for example: 8192
-#       Boot pool target size in MiB; use 0 for dedicated boot pool (default: 8192).
+#   --size SIZE_MIB (optional), for example: 16384
+#       Boot pool target size in MiB; use 0 for dedicated boot pool (default: 16384).
 #
 # Copyright (c) 2026, Lime Technology, Inc. (Limetech)
 # -----------------------------------------------------------------------------
@@ -28,8 +28,8 @@ TARGET_DISK_ARG_1=""
 TARGET_DISK_ARG_2=""
 TARGET_DISK=""
 TARGET_DISK_2=""
-SIZE="${INTERNAL_BOOT_SIZE_MIB:-8192}"
-DEFAULT_BOOT_SIZE_MIB=8192
+SIZE="${INTERNAL_BOOT_SIZE_MIB:-16384}"
+DEFAULT_BOOT_SIZE_MIB=16384
 MIN_DATA_PART_MIB=1
 REQUESTED_DEDICATED_SIZE=0
 BOOT_POOL_NAME="${BOOT_POOL_NAME:-boot}"

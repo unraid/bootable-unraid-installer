@@ -230,9 +230,19 @@ ui_menu_with_brand() {
     local title="$1"
     local prompt="$2"
     local rows cols logo_width logo_height logo_x menu_x menu_y menu_width menu_height list_height out rc
-    local entry_count prompt_lines available_list_height
+    local entry_count prompt_lines available_list_height branded_prompt
     shift 2
     entry_count=$(( $# / 2 ))
+
+    # Keep status/prompt lines aligned with the left edge of the branded logo
+    # and menu entries inside the wide branded dialog.
+    if [[ "$ui_backend" == "dialog" ]]; then
+        branded_prompt="$(while IFS= read -r prompt_line; do
+            printf '%24s%s\n' '' "$prompt_line"
+        done <<< "$prompt")"
+    else
+        branded_prompt="$prompt"
+    fi
 
     rows="$(tput lines 2>/dev/null || echo 24)"
     cols="$(tput cols 2>/dev/null || echo 80)"
@@ -267,7 +277,14 @@ ui_menu_with_brand() {
             # Whiptail reserves a few columns inside the 90-column box.
             # Use its effective content width so the logo is truly centred.
             UI_BRAND_COLS=90
-            whiptail --title "$title" --menu "$(ui_brand_banner)"$'\n'"$prompt" "$h" "$w" "$list_h" "$@" 3>&1 1>&2 2>&3
+            local whiptail_brand
+            local prompt_indent
+            whiptail_brand="$(ui_brand_banner)"
+            prompt_indent="$(printf '%24s' '')"
+            while IFS= read -r prompt_line; do
+                whiptail_brand+=$'\n'"${prompt_indent}${prompt_line}"
+            done <<< "$prompt"
+            whiptail --title "$title" --menu "$whiptail_brand" "$h" "$w" "$list_h" "$@" 3>&1 1>&2 2>&3
             return
         fi
         ui_menu "$title" "$(ui_brand_banner)"$'\n'"$prompt" "$@"
@@ -299,7 +316,7 @@ ui_menu_with_brand() {
     out="$(dialog --stdout \
         --begin 1 "$logo_x" --title "UNRAID" --infobox "$(ui_brand_logo)" "$logo_height" "$logo_width" \
         --and-widget \
-        --begin "$menu_y" "$menu_x" --title "$title" --menu "$prompt" "$menu_height" "$menu_width" "$list_height" "$@")"
+        --begin "$menu_y" "$menu_x" --title "$title" --menu "$branded_prompt" "$menu_height" "$menu_width" "$list_height" "$@")"
     rc=$?
     [[ $rc -eq 0 ]] || return "$rc"
     printf '%s\n' "$out"
