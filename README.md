@@ -22,9 +22,12 @@ The toolchain focuses on producing bootable installer artifacts (ISO and IMG), p
 
 Start here, then use the detailed guides below:
 
-1. `docs/user-build.md`
+1. `docs/USER_GUIDE.md`
+   - User guide for choosing an installer asset, booting the tool, and creating
+     flash or internal boot devices.
+2. `docs/user-build.md`
    - High-level build-chain scope, outputs, and script responsibilities.
-2. `docs/USER_COMMANDS.md`
+3. `docs/USER_COMMANDS.md`
    - Command reference, build modes, common options, and troubleshooting.
 
 ## Typical Build Entry Point
