@@ -67,6 +67,7 @@ CONFIG_SYSFB_SIMPLEFB=y
 CONFIG_DRM_SIMPLEDRM=y
 CONFIG_FB=y
 CONFIG_FRAMEBUFFER_CONSOLE=y
+CONFIG_FRAMEBUFFER_CONSOLE_DEFERRED_TAKEOVER=y
 CONFIG_FB_EFI=y
 CONFIG_PCI=y
 CONFIG_PCI_MSI=y
@@ -625,6 +626,7 @@ apt install -y --no-install-recommends \
  iw \
  iproute2 \
  iputils-ping \
+ mtools \
  network-manager \
  busybox \
  dialog \
@@ -633,6 +635,8 @@ apt install -y --no-install-recommends \
  parted \
  pciutils \
  php-cli \
+ passwd \
+ samba \
  sed \
  udev \
  unzip \
@@ -727,12 +731,28 @@ if [ "$MENU_UI" = "gui" ]; then
       echo "Missing required onboarding script: $SCRIPT_DIR/menu_recovery.sh" >&2
       exit 1
    }
+    [ -f "$SCRIPT_DIR/menu_recovery_smb.sh" ] || {
+      echo "Missing required onboarding script: $SCRIPT_DIR/menu_recovery_smb.sh" >&2
+      exit 1
+   }
+    [ -f "$SCRIPT_DIR/menu_recovery_restore.sh" ] || {
+      echo "Missing required onboarding script: $SCRIPT_DIR/menu_recovery_restore.sh" >&2
+      exit 1
+   }
+    [ -f "$SCRIPT_DIR/menu_recovery_restore_existing.sh" ] || {
+      echo "Missing required onboarding script: $SCRIPT_DIR/menu_recovery_restore_existing.sh" >&2
+      exit 1
+   }
     sudo cp "$SCRIPT_DIR/menu_gui_common.sh" "$ONBOARDING_ASSET_DIR/menu_gui_common.sh"
    sudo cp "$SCRIPT_DIR/menu_gui_user.sh" "$ONBOARDING_ASSET_DIR/menu_gui_user.sh"
     sudo cp "$SCRIPT_DIR/menu_recovery.sh" "$ONBOARDING_ASSET_DIR/menu_recovery.sh"
+    sudo cp "$SCRIPT_DIR/menu_recovery_smb.sh" "$ONBOARDING_ASSET_DIR/menu_recovery_smb.sh"
+    sudo cp "$SCRIPT_DIR/menu_recovery_restore.sh" "$ONBOARDING_ASSET_DIR/menu_recovery_restore.sh"
+    sudo cp "$SCRIPT_DIR/menu_recovery_restore_existing.sh" "$ONBOARDING_ASSET_DIR/menu_recovery_restore_existing.sh"
     sudo chmod +x "$ONBOARDING_ASSET_DIR/menu_gui_common.sh"
    sudo chmod +x "$ONBOARDING_ASSET_DIR/menu_gui_user.sh"
     sudo chmod +x "$ONBOARDING_ASSET_DIR/menu_recovery.sh"
+    sudo chmod +x "$ONBOARDING_ASSET_DIR/menu_recovery_smb.sh" "$ONBOARDING_ASSET_DIR/menu_recovery_restore.sh" "$ONBOARDING_ASSET_DIR/menu_recovery_restore_existing.sh"
 fi
 
 sudo cp "$SCRIPT_DIR/create_internal_boot_user.sh" "$ONBOARDING_ASSET_DIR/create_internal_boot.sh"
@@ -747,7 +767,7 @@ fi
 printf '%s\n' "$installer_version" | sudo tee "$ONBOARDING_ASSET_DIR/installer-version" >/dev/null
 sudo cp "$SCRIPT_DIR/menu_gui_common.sh" "$ONBOARDING_ASSET_DIR/menu_gui_common.sh"
 sudo cp "$SCRIPT_DIR/menu_gui_user.sh" "$ONBOARDING_ASSET_DIR/menu.sh"
-sudo chmod +x "$ONBOARDING_ASSET_DIR/menu.sh" "$ONBOARDING_ASSET_DIR/menu_gui_common.sh" "$ONBOARDING_ASSET_DIR/menu_recovery.sh" "$ONBOARDING_ASSET_DIR/create_internal_boot.sh" "$ONBOARDING_ASSET_DIR/create_flash_boot.sh" "$ONBOARDING_ASSET_DIR/zip.sh" "$ONBOARDING_ASSET_DIR/version_check.sh"
+sudo chmod +x "$ONBOARDING_ASSET_DIR/menu.sh" "$ONBOARDING_ASSET_DIR/menu_gui_common.sh" "$ONBOARDING_ASSET_DIR/menu_recovery.sh" "$ONBOARDING_ASSET_DIR/menu_recovery_smb.sh" "$ONBOARDING_ASSET_DIR/menu_recovery_restore.sh" "$ONBOARDING_ASSET_DIR/menu_recovery_restore_existing.sh" "$ONBOARDING_ASSET_DIR/create_internal_boot.sh" "$ONBOARDING_ASSET_DIR/create_flash_boot.sh" "$ONBOARDING_ASSET_DIR/zip.sh" "$ONBOARDING_ASSET_DIR/version_check.sh"
 
 if [ -n "$MENU_BACKEND_DEFAULT" ]; then
    printf '%s\n' "$MENU_BACKEND_DEFAULT" | sudo tee "$ONBOARDING_ASSET_DIR/menu-backend" >/dev/null
@@ -1217,8 +1237,6 @@ sudo depmod -a -b "$ROOTFS" "$KERNEL_RELEASE"
 sudo tee "$ROOTFS/init" <<'EOF' >/dev/null
 #!/bin/bash
 
-printf 'Loading......\n' > /dev/console 2>/dev/null || printf 'Loading......\n'
-
 boot_log() {
  local message="$*"
  local line=""
@@ -1276,6 +1294,10 @@ mkdir -p /run
 mount -t tmpfs tmpfs /run
 mkdir -p /tmp
 mount -t tmpfs tmpfs /tmp
+
+if [ -w /dev/tty0 ]; then
+ printf '\033[2J\033[H\n  Internal Boot Setup\n\n  Loading installer environment...\n' > /dev/tty0 2>/dev/null || true
+fi
 
 init_boot_log_files
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -2181,6 +2203,9 @@ apply_persistent_install_overrides() {
     menu_gui_common.sh \
     menu_gui_user.sh \
     menu_recovery.sh \
+    menu_recovery_smb.sh \
+    menu_recovery_restore.sh \
+    menu_recovery_restore_existing.sh \
     menu_gui.sh \
     create_internal_boot.sh \
     create_flash_boot.sh \
@@ -2206,6 +2231,9 @@ apply_persistent_install_overrides() {
     menu_gui_common.sh \
     menu_gui_user.sh \
     menu_recovery.sh \
+    menu_recovery_smb.sh \
+    menu_recovery_restore.sh \
+    menu_recovery_restore_existing.sh \
     menu_gui.sh \
     create_internal_boot.sh \
     create_flash_boot.sh \
@@ -2215,6 +2243,14 @@ apply_persistent_install_overrides() {
     if [ -f "$override_root/$file_name" ]; then
       override_sha256="$(persistent_override_sha256 "$override_root/$file_name")"
       cp -f "$override_root/$file_name" "$ONBOARDING_DIR/$file_name"
+      # Runtime overrides are often copied from Windows-managed FAT media.
+      # Normalize CRLF here so Bash does not interpret a trailing carriage
+      # return as part of a command name.
+      if ! sed -i 's/\r$//' "$ONBOARDING_DIR/$file_name"; then
+        boot_log "ERROR: failed to normalize runtime override: $file_name"
+        rm -f "$ONBOARDING_DIR/$file_name"
+        exit 1
+      fi
       case "$file_name" in
             install-profile)
           chmod 0644 "$ONBOARDING_DIR/$file_name" 2>/dev/null || true
@@ -2282,6 +2318,13 @@ launch_onboarding_target() {
  fi
 
  boot_log "launching onboarding menu"
+ # With deferred framebuffer-console takeover enabled, make the mode switch and
+ # terminal-size update complete before dialog/whiptail renders its first box.
+ if [ -w /dev/tty0 ]; then
+    printf '\033[2J\033[H' > /dev/tty0 2>/dev/null || true
+    sleep 1
+    printf '\033[2J\033[H' > /dev/tty0 2>/dev/null || true
+ fi
  if command -v cttyhack >/dev/null 2>&1; then
     cttyhack /bin/bash "$menu_script" || true
     return
@@ -2361,6 +2404,7 @@ if [ "\$root" = "memdisk" ] || [ "\$root" = "(memdisk)" ] || [ -z "\$root" ]; th
 fi
 if loadfont /boot/grub/themes/unraid/terminus-14.pf2 ; then
  set gfxmode=auto
+ set gfxpayload=keep
  terminal_output gfxterm
  set theme=/boot/grub/themes/unraid/theme.txt
  export theme
@@ -2369,8 +2413,7 @@ else
 fi
 
 menuentry "Internal Boot Setup" {
- echo "Loading......"
- sleep 1
+ echo "Loading installer environment..."
  linux (\$root)/boot/vmlinuz root=/dev/ram0 rw rdinit=/init loglevel=3 console=tty0 consoleblank=0${BOOT_PERSIST_KERNEL_ARGS}
  initrd (\$root)/boot/initrd
 }
@@ -2429,6 +2472,7 @@ if [ "\$root" = "memdisk" ] || [ "\$root" = "(memdisk)" ] || [ -z "\$root" ]; th
 fi
 if loadfont /boot/grub/themes/unraid/terminus-14.pf2 ; then
  set gfxmode=auto
+ set gfxpayload=keep
  terminal_output gfxterm
  set theme=/boot/grub/themes/unraid/theme.txt
  export theme
@@ -2437,8 +2481,7 @@ else
 fi
 
 menuentry "Internal Boot Setup" {
- echo "Loading....."
- sleep 1
+ echo "Loading installer environment..."
  linux (\$root)/boot/vmlinuz root=/dev/ram0 rw rdinit=/init loglevel=3 console=tty0 consoleblank=0
  initrd (\$root)/boot/initrd
 }
@@ -2530,6 +2573,7 @@ insmod png
 
 if loadfont /boot/grub/themes/unraid/terminus-14.pf2 ; then
  set gfxmode=auto
+ set gfxpayload=keep
  terminal_output gfxterm
  set theme=/boot/grub/themes/unraid/theme.txt
  export theme
@@ -2538,8 +2582,7 @@ else
 fi
 
 menuentry "Internal Boot Setup" {
- echo "Loading....."
- sleep 1
+ echo "Loading installer environment..."
  if [ -e (cd0,gpt1)/boot/vmlinuz ]; then
   set root=(cd0,gpt1)
  elif [ -e (cd0,msdos1)/boot/vmlinuz ]; then

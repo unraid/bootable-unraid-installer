@@ -14,6 +14,8 @@ ui_calc_dims() {
 
     rows="$(tput lines 2>/dev/null || echo 24)"
     cols="$(tput cols 2>/dev/null || echo 80)"
+    [[ "$rows" =~ ^[0-9]+$ ]] || rows=24
+    [[ "$cols" =~ ^[0-9]+$ ]] || cols=80
 
     (( rows < 20 )) && rows=20
     (( cols < 70 )) && cols=70
@@ -171,6 +173,148 @@ detect_ui_backend() {
     ui_backend="text"
 }
 
+ui_brand_banner() {
+    local cols width indent
+
+    cols="${UI_BRAND_COLS:-$(tput cols 2>/dev/null || echo 80)}"
+    width=$((cols - 6))
+    (( width > 180 )) && width=180
+    (( width < 70 )) && width=70
+    indent=$(((width - 42) / 2))
+    (( indent < 0 )) && indent=0
+
+    brand_line() {
+        printf '%*s|%-40s|\n' "$indent" '' "$1"
+    }
+
+    printf '%*s%s\n' "$indent" '' '+----------------------------------------+'
+    brand_line '                            |'
+    brand_line '                        |      |'
+    brand_line '    |               |   |      |   |'
+    brand_line '    |               |              |'
+    brand_line '    |   |       |   |              |'
+    brand_line '        |       |'
+    brand_line '            |'
+    brand_line '              U N R A I D'
+    printf '%*s%s\n' "$indent" '' '+----------------------------------------+'
+}
+
+ui_center_text() {
+    local text="$1"
+    local width="${2:-84}"
+    local line length padding
+
+    while IFS= read -r line; do
+        length=${#line}
+        padding=$(( (width - length) / 2 ))
+        (( padding < 0 )) && padding=0
+        printf '%*s%s\n' "$padding" '' "$line"
+    done <<< "$text"
+}
+
+ui_brand_logo() {
+    cat <<'EOF'
+                            |
+                        |       |
+    |               |   |       |   |
+    |               |               |
+    |   |       |   |               |
+        |       |
+            |
+
+               U N R A I D
+EOF
+}
+
+ui_menu_with_brand() {
+    local title="$1"
+    local prompt="$2"
+    local rows cols logo_width logo_height logo_x menu_x menu_y menu_width menu_height list_height out rc
+    local entry_count prompt_lines available_list_height branded_prompt
+    shift 2
+    entry_count=$(( $# / 2 ))
+
+    # Keep status/prompt lines aligned with the left edge of the branded logo
+    # and menu entries inside the wide branded dialog.
+    if [[ "$ui_backend" == "dialog" ]]; then
+        branded_prompt="$(while IFS= read -r prompt_line; do
+            printf '%24s%s\n' '' "$prompt_line"
+        done <<< "$prompt")"
+    else
+        branded_prompt="$prompt"
+    fi
+
+    rows="$(tput lines 2>/dev/null || echo 24)"
+    cols="$(tput cols 2>/dev/null || echo 80)"
+
+    if [[ "$ui_backend" != "dialog" ]]; then
+        if [[ "$ui_backend" == "whiptail" ]]; then
+            local h w list_h
+            # The branded prompt needs additional rows. On smaller terminals,
+            # use the hotkey prompt so rendering remains reliable.
+            if (( rows < 28 || cols < 96 )); then
+                ui_hotkey_select "$title" "$prompt" "$@"
+                return
+            fi
+            h=$((rows - 4))
+            (( h > 36 )) && h=36
+            w=90
+            prompt_lines=0
+            while IFS= read -r _; do
+                prompt_lines=$((prompt_lines + 1))
+            done <<< "$prompt"
+            # Ten lines are reserved by the banner and seven by the menu
+            # frame/buttons. Leave the remaining rows for menu entries.
+            available_list_height=$((h - 10 - prompt_lines - 7))
+            (( available_list_height < 1 )) && available_list_height=1
+            list_h=$entry_count
+            (( list_h > available_list_height )) && list_h=$available_list_height
+            (( list_h < 1 )) && list_h=1
+            # Whiptail reserves a few columns inside the 90-column box.
+            # Use its effective content width so the logo is truly centred.
+            UI_BRAND_COLS=90
+            local whiptail_brand
+            local prompt_indent
+            whiptail_brand="$(ui_brand_banner)"
+            prompt_indent="$(printf '%24s' '')"
+            while IFS= read -r prompt_line; do
+                whiptail_brand+=$'\n'"${prompt_indent}${prompt_line}"
+            done <<< "$prompt"
+            whiptail --title "$title" --menu "$whiptail_brand" "$h" "$w" "$list_h" "$@" 3>&1 1>&2 2>&3
+            return
+        fi
+        ui_menu "$title" "$(ui_brand_banner)"$'\n'"$prompt" "$@"
+        return
+    fi
+
+    # The logo and menu are separate Dialog widgets.  Fall back before the
+    # widgets would overlap or extend beyond the terminal.
+    if (( rows < 31 || cols < 108 )); then
+        ui_hotkey_select "$title" "$prompt" "$@"
+        return
+    fi
+    logo_width=42
+    logo_height=10
+    menu_width=100
+    (( menu_width > cols - 8 )) && menu_width=$((cols - 8))
+    (( menu_width < 70 )) && menu_width=70
+    menu_height=$((rows - 13))
+    (( menu_height > 28 )) && menu_height=28
+    list_height=$((menu_height - 8))
+    (( list_height < 1 )) && list_height=1
+    logo_x=$(((cols - logo_width) / 2))
+    menu_x=$(((cols - menu_width) / 2))
+    menu_y=11
+
+    out="$(dialog --stdout \
+        --begin 1 "$logo_x" --title "UNRAID" --infobox "$(ui_brand_logo)" "$logo_height" "$logo_width" \
+        --and-widget \
+        --begin "$menu_y" "$menu_x" --title "$title" --menu "$branded_prompt" "$menu_height" "$menu_width" "$list_height" "$@")"
+    rc=$?
+    [[ $rc -eq 0 ]] || return "$rc"
+    printf '%s\n' "$out"
+}
+
 ui_prompt() {
     local title="$1"
     local prompt="$2"
@@ -231,8 +375,9 @@ ui_confirm() {
 ui_menu() {
     local title="$1"
     local prompt="$2"
-    local h w list_h
+    local h w list_h entry_count
     shift 2
+    entry_count=$(( $# / 2 ))
 
     case "$ui_backend" in
         whiptail)
@@ -240,6 +385,8 @@ ui_menu() {
             h="$UI_DIM_1"
             w="$UI_DIM_2"
             list_h="$UI_DIM_3"
+            (( list_h > entry_count )) && list_h=$entry_count
+            (( list_h < 1 )) && list_h=1
             whiptail --title "$title" --menu "$prompt" "$h" "$w" "$list_h" "$@" 3>&1 1>&2 2>&3
             ;;
         dialog)
@@ -248,6 +395,8 @@ ui_menu() {
             h="$UI_DIM_1"
             w="$UI_DIM_2"
             list_h="$UI_DIM_3"
+            (( list_h > entry_count )) && list_h=$entry_count
+            (( list_h < 1 )) && list_h=1
             out="$(dialog --stdout --title "$title" --menu "$prompt" "$h" "$w" "$list_h" "$@")"
             local rc=$?
             [[ $rc -eq 0 ]] || return "$rc"

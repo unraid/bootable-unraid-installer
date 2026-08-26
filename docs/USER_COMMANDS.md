@@ -196,6 +196,22 @@ Notes:
 
 ## Runtime Menu Scripts
 
+### Internal boot creation
+
+`create_internal_boot_user.sh` creates a dedicated internal boot pool from an
+Unraid ZIP or restores an existing boot backup. It supports one disk or a
+two-disk mirrored ZFS boot pool. See [Internal boot creation process](internal-boot-process.md)
+for the phases, safety checks, and the EFI verification required for mirrored
+setups.
+
+### Restore Existing Internal Boot
+
+Recovery’s **Restore Existing Internal Boot** replaces files in the current
+boot dataset without repartitioning the disks. It does not currently update
+the independent EFI partitions or rewrite a backup’s `unraiduuid`. See
+[Restore Existing Internal Boot process](recovery-restore-existing-process.md)
+before using it on a mirrored boot pool.
+
 Runtime uses GUI-first menu scripts:
 
 - `menu_gui_user.sh`: base user onboarding menu
