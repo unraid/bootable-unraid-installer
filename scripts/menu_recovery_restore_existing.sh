@@ -25,6 +25,7 @@ mount_root=""
 pool_imported=0
 snapshot_name=""
 snapshot_created=0
+rollback_required=0
 pool_guid=""
 checksum_error=""
 if [[ -n "${RUN_LOG_FILE:-}" ]]; then
@@ -93,7 +94,7 @@ archive_contains_symlink() {
 }
 
 cleanup() {
-    if (( snapshot_created && pool_imported )); then
+    if (( rollback_required && snapshot_created && pool_imported )); then
         zfs unmount "$boot_dataset" >/dev/null 2>&1 || true
         if zfs rollback "$snapshot_name" >/dev/null 2>&1; then
             zfs destroy "$snapshot_name" >/dev/null 2>&1 || true
@@ -273,6 +274,7 @@ if ! zfs snapshot "$snapshot_name"; then
     exit 1
 fi
 snapshot_created=1
+rollback_required=1
 
 status_msg "Replacing the ZFS boot filesystem contents..."
 if ! find "$boot_mountpoint" -mindepth 1 -xdev -delete; then
@@ -312,6 +314,7 @@ if ! sync; then
     ui_msg "Restore Existing Internal Boot" "Unable to sync the restored boot filesystem."
     exit 1
 fi
+rollback_required=0
 status_msg "Finalizing the restore..."
 if ! zfs destroy "$snapshot_name"; then
     ui_msg "Restore Existing Internal Boot" "Unable to remove the restore rollback snapshot."

@@ -250,13 +250,9 @@ ui_menu_with_brand() {
     if [[ "$ui_backend" != "dialog" ]]; then
         if [[ "$ui_backend" == "whiptail" ]]; then
             local h w list_h
-            # The branded prompt needs additional rows.  On smaller terminals
-            # use the normal menu so rendering cannot fail or be mistaken for
-            # a Back selection by callers.
+            # The branded prompt needs additional rows. On smaller terminals,
+            # use the hotkey prompt so rendering remains reliable.
             if (( rows < 28 || cols < 96 )); then
-                if ui_menu "$title" "$prompt" "$@"; then
-                    return
-                fi
                 ui_hotkey_select "$title" "$prompt" "$@"
                 return
             fi
@@ -294,9 +290,6 @@ ui_menu_with_brand() {
     # The logo and menu are separate Dialog widgets.  Fall back before the
     # widgets would overlap or extend beyond the terminal.
     if (( rows < 31 || cols < 108 )); then
-        if ui_menu "$title" "$prompt" "$@"; then
-            return
-        fi
         ui_hotkey_select "$title" "$prompt" "$@"
         return
     fi
