@@ -693,6 +693,7 @@ sudo rm -f \
    "$ONBOARDING_ASSET_DIR"/menu_*.sh \
    "$ONBOARDING_ASSET_DIR"/menu_gui_common.sh \
    "$ONBOARDING_ASSET_DIR"/create_internal_boot.sh \
+   "$ONBOARDING_ASSET_DIR"/disk_identity.sh \
    "$ONBOARDING_ASSET_DIR"/convert_internal_boot_to_dedicated.sh \
    "$ONBOARDING_ASSET_DIR"/create_flash_boot.sh \
    "$ONBOARDING_ASSET_DIR"/zip.sh \
@@ -703,6 +704,10 @@ sudo rm -f \
 
 [ -f "$SCRIPT_DIR/create_internal_boot_user.sh" ] || {
   echo "Missing required onboarding script: $SCRIPT_DIR/create_internal_boot_user.sh" >&2
+  exit 1
+}
+[ -f "$SCRIPT_DIR/disk_identity.sh" ] || {
+  echo "Missing required onboarding script: $SCRIPT_DIR/disk_identity.sh" >&2
   exit 1
 }
 [ -f "$SCRIPT_DIR/zip.sh" ] || {
@@ -756,6 +761,7 @@ if [ "$MENU_UI" = "gui" ]; then
 fi
 
 sudo cp "$SCRIPT_DIR/create_internal_boot_user.sh" "$ONBOARDING_ASSET_DIR/create_internal_boot.sh"
+sudo cp "$SCRIPT_DIR/disk_identity.sh" "$ONBOARDING_ASSET_DIR/disk_identity.sh"
 sudo cp "$SCRIPT_DIR/create_flash_boot.sh" "$ONBOARDING_ASSET_DIR/create_flash_boot.sh"
 sudo cp "$SCRIPT_DIR/zip.sh" "$ONBOARDING_ASSET_DIR/zip.sh"
 sudo cp "$SCRIPT_DIR/version_check.sh" "$ONBOARDING_ASSET_DIR/version_check.sh"
@@ -767,7 +773,7 @@ fi
 printf '%s\n' "$installer_version" | sudo tee "$ONBOARDING_ASSET_DIR/installer-version" >/dev/null
 sudo cp "$SCRIPT_DIR/menu_gui_common.sh" "$ONBOARDING_ASSET_DIR/menu_gui_common.sh"
 sudo cp "$SCRIPT_DIR/menu_gui_user.sh" "$ONBOARDING_ASSET_DIR/menu.sh"
-sudo chmod +x "$ONBOARDING_ASSET_DIR/menu.sh" "$ONBOARDING_ASSET_DIR/menu_gui_common.sh" "$ONBOARDING_ASSET_DIR/menu_recovery.sh" "$ONBOARDING_ASSET_DIR/menu_recovery_smb.sh" "$ONBOARDING_ASSET_DIR/menu_recovery_restore.sh" "$ONBOARDING_ASSET_DIR/menu_recovery_restore_existing.sh" "$ONBOARDING_ASSET_DIR/create_internal_boot.sh" "$ONBOARDING_ASSET_DIR/create_flash_boot.sh" "$ONBOARDING_ASSET_DIR/zip.sh" "$ONBOARDING_ASSET_DIR/version_check.sh"
+sudo chmod +x "$ONBOARDING_ASSET_DIR/menu.sh" "$ONBOARDING_ASSET_DIR/menu_gui_common.sh" "$ONBOARDING_ASSET_DIR/menu_recovery.sh" "$ONBOARDING_ASSET_DIR/menu_recovery_smb.sh" "$ONBOARDING_ASSET_DIR/menu_recovery_restore.sh" "$ONBOARDING_ASSET_DIR/menu_recovery_restore_existing.sh" "$ONBOARDING_ASSET_DIR/create_internal_boot.sh" "$ONBOARDING_ASSET_DIR/disk_identity.sh" "$ONBOARDING_ASSET_DIR/create_flash_boot.sh" "$ONBOARDING_ASSET_DIR/zip.sh" "$ONBOARDING_ASSET_DIR/version_check.sh"
 
 if [ -n "$MENU_BACKEND_DEFAULT" ]; then
    printf '%s\n' "$MENU_BACKEND_DEFAULT" | sudo tee "$ONBOARDING_ASSET_DIR/menu-backend" >/dev/null

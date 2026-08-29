@@ -21,6 +21,7 @@ VERIFY_MOUNT_DIRS=()
 CI_NBD_DISKS=()
 CI_UDEV_RULE=""
 CI_TAIL_PID=""
+CI_SERIAL_SOCKET=""
 
 usage() {
     cat <<'USAGE'
@@ -30,6 +31,8 @@ Usage:
   sudo tests/linux-rescue-kvm-e2e.sh stop [--state-dir DIR]
   sudo tests/linux-rescue-kvm-e2e.sh verify [--disk DEVICE --disk DEVICE] [--state-dir DIR]
   sudo tests/linux-rescue-kvm-e2e.sh ci --iso PATH --unraid-zip PATH [options]
+  sudo tests/linux-rescue-kvm-e2e.sh ci-menu --iso PATH --unraid-zip PATH [options]
+  sudo tests/linux-rescue-kvm-e2e.sh ci-emmc --iso PATH --unraid-zip PATH [options]
 
 Actions:
   launch   Start the installer VM with exactly two disposable whole disks.
@@ -38,6 +41,10 @@ Actions:
            loaders, and persisted host-visible disk identities.
   ci       Create disposable sparse disks, run the install unattended, verify
            it, and clean up. This action is intended for ephemeral CI runners.
+  ci-menu  Boot the real ISO menu in KVM, drive its text prompts through the
+           serial console, verify the install, and clean up.
+  ci-emmc  Install to one emulated MMC device through the real ISO menu and
+           verify the eMMC product-plus-serial Boot Pool identity path.
 
 Options:
   --iso PATH          Installer ISO to boot (required by launch)
@@ -49,7 +56,8 @@ Options:
   --vnc-display N     Localhost VNC display (default: 1)
   --bridge INTERFACE  Existing Linux bridge for hosts without user/passt networking
   --seed-image PATH   Read-only installer persistence seed passed to the launcher
-  --unraid-zip PATH   Verified Unraid OS ZIP used to build the ci action seed
+  --unraid-zip PATH   Verified Unraid OS ZIP used by ci and ci-menu. ci-emmc
+                      creates a small checksum-valid payload fixture instead.
   --help              Show this help
 
 This harness is destructive. Use only disks supplied by a disposable test
@@ -153,6 +161,11 @@ partition_path() {
 normalize_disks() {
     local disk normalized
     local normalized_disks=()
+    local expected_count=2
+
+    if [[ "$ACTION" == "ci-emmc" ]]; then
+        expected_count=1
+    fi
 
     for disk in "${DISKS[@]}"; do
         normalized="$(readlink -f "$disk")"
@@ -165,14 +178,14 @@ normalize_disks() {
     done
     DISKS=("${normalized_disks[@]}")
 
-    if [[ ${#DISKS[@]} -ne 2 ]]; then
-        echo "This mirrored E2E test requires exactly two --disk arguments." >&2
+    if [[ ${#DISKS[@]} -ne "$expected_count" ]]; then
+        echo "This E2E action requires exactly $expected_count test disk(s)." >&2
         exit 1
     fi
-    [[ "${DISKS[0]}" != "${DISKS[1]}" ]] || {
+    if (( expected_count == 2 )) && [[ "${DISKS[0]}" == "${DISKS[1]}" ]]; then
         echo "The two test disks must be different." >&2
         exit 1
-    }
+    fi
 }
 
 load_recorded_disks() {
@@ -321,10 +334,59 @@ EOF
     rm -rf "$seed_root"
 }
 
-create_ci_nbd_disk() {
-    local image="$1" serial="$2" nbd_disk="" nbd_name candidate
+create_ci_emmc_fixture_zip() {
+    local destination="$1"
 
-    truncate -s 36G "$image"
+    python3 - "$destination" <<'PY'
+import hashlib
+import sys
+import zipfile
+
+destination = sys.argv[1]
+payload = b"Unraid eMMC identity E2E fixture\n"
+checksum = hashlib.sha256(payload).hexdigest().encode() + b"\n"
+
+with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+    archive.writestr("bzimage", payload)
+    archive.writestr("bzimage.sha256", checksum)
+    archive.writestr("config/", b"")
+    archive.writestr("config/ident.cfg", b'NAME="eMMC Identity E2E"\n')
+PY
+}
+
+create_ci_menu_seed() {
+    local scenario="${1:-mirrored-nvme}"
+    local seed_root="$STATE_DIR/ci-storage/seed-root" fixture_name
+
+    SEED_IMAGE="$STATE_DIR/ci-storage/installer-menu-seed.iso"
+    mkdir -p "$seed_root/runtime" "$seed_root/zips"
+    if [[ "$scenario" == "single-emmc" ]]; then
+        fixture_name="$(python3 - "$REPO_ROOT/build/unraid-release-lock.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as release_lock:
+    print(json.load(release_lock)["filename"])
+PY
+)"
+        [[ "$fixture_name" == unRAIDServer-*-x86_64.zip && "$fixture_name" != */* ]] || {
+            echo "Invalid fixture filename from build/unraid-release-lock.json: $fixture_name" >&2
+            exit 1
+        }
+        create_ci_emmc_fixture_zip "$seed_root/zips/$fixture_name"
+    else
+        cp "$UNRAID_ZIP" "$seed_root/zips/"
+    fi
+    printf '%s\n' text > "$seed_root/runtime/menu-backend"
+    sync
+    xorriso -as mkisofs -quiet -V INSTALL-PERSIST -o "$SEED_IMAGE" "$seed_root"
+    rm -rf "$seed_root"
+}
+
+create_ci_nbd_disk() {
+    local image="$1" serial="$2" size="${3:-36G}" nbd_disk="" nbd_name candidate
+
+    truncate -s "$size" "$image"
     for candidate in /dev/nbd*; do
         [[ "$candidate" =~ p[0-9]+$ ]] && continue
         nbd_name="${candidate##*/}"
@@ -334,7 +396,7 @@ create_ci_nbd_disk() {
         fi
     done
     [[ -n "$nbd_disk" ]] || { echo "No unused NBD device is available." >&2; exit 1; }
-    qemu-nbd --connect="$nbd_disk" --format=raw "$image"
+    connect_ci_nbd_image "$nbd_disk" "$image"
     udevadm settle
     cat >> "$CI_UDEV_RULE" <<EOF
 KERNEL=="$nbd_name", ENV{ID_MODEL}="CI_DISK", ENV{ID_SERIAL_SHORT}="$serial", ENV{ID_SERIAL}="CI_DISK_$serial"
@@ -342,16 +404,57 @@ EOF
     CI_NBD_DISKS+=("$nbd_disk")
 }
 
+wait_for_ci_nbd_detach() {
+    local disk="$1" nbd_name
+    nbd_name="${disk##*/}"
+
+    for _ in {1..200}; do
+        if [[ ! -s "/sys/class/block/$nbd_name/pid" ]] &&
+            [[ "$(blockdev --getsize64 "$disk" 2>/dev/null || printf '0')" == "0" ]]; then
+            return 0
+        fi
+        sleep 0.1
+    done
+    return 1
+}
+
+connect_ci_nbd_image() {
+    local disk="$1" image="$2" expected_size actual_size
+
+    expected_size="$(stat -c %s "$image")"
+    for attempt in 1 2 3; do
+        if qemu-nbd --connect="$disk" --format=raw "$image"; then
+            for _ in {1..100}; do
+                actual_size="$(blockdev --getsize64 "$disk" 2>/dev/null || printf '0')"
+                if [[ "$actual_size" == "$expected_size" ]]; then
+                    return 0
+                fi
+                sleep 0.1
+            done
+        fi
+        echo "NBD attach attempt $attempt did not expose $expected_size bytes on $disk; retrying." >&2
+        qemu-nbd --disconnect "$disk" >/dev/null 2>&1 || true
+        wait_for_ci_nbd_detach "$disk" || true
+    done
+
+    echo "Unable to attach $image to $disk with the expected size." >&2
+    return 1
+}
+
 refresh_ci_nbd_disks() {
     local index disk image part2 part3 part4
 
     for disk in "${CI_NBD_DISKS[@]}"; do
         qemu-nbd --disconnect "$disk"
+        wait_for_ci_nbd_detach "$disk" || {
+            echo "Timed out waiting for $disk to detach before host verification." >&2
+            exit 1
+        }
     done
     for index in "${!CI_NBD_DISKS[@]}"; do
         disk="${CI_NBD_DISKS[$index]}"
         image="$STATE_DIR/ci-storage/target-$((index + 1)).raw"
-        if ! qemu-nbd --connect="$disk" --format=raw "$image"; then
+        if ! connect_ci_nbd_image "$disk" "$image"; then
             echo "Unable to reopen $image on $disk for host verification." >&2
             exit 1
         fi
@@ -359,14 +462,18 @@ refresh_ci_nbd_disks() {
         part2="$(partition_path "$disk" 2)"
         part3="$(partition_path "$disk" 3)"
         part4="$(partition_path "$disk" 4)"
-        for _ in {1..50}; do
+        for _ in {1..200}; do
             [[ -b "$part2" && -b "$part3" && -b "$part4" ]] && break
-            partx --add "$disk" >/dev/null 2>&1 || true
-            udevadm settle
+            blockdev --rereadpt "$disk" >/dev/null 2>&1 || true
+            partprobe "$disk" >/dev/null 2>&1 || true
+            partx --update "$disk" >/dev/null 2>&1 || partx --add "$disk" >/dev/null 2>&1 || true
+            udevadm settle --timeout=2 >/dev/null 2>&1 || true
             sleep 0.1
         done
         [[ -b "$part2" && -b "$part3" && -b "$part4" ]] || {
             echo "Partition devices did not appear after reopening $disk." >&2
+            lsblk -o NAME,PATH,SIZE,TYPE,FSTYPE,PARTLABEL "$disk" >&2 || true
+            partx --show "$disk" >&2 || true
             exit 1
         }
     done
@@ -379,7 +486,7 @@ run_ci_test() {
     [[ -n "$ISO" && -f "$ISO" ]] || { echo "ci requires --iso PATH." >&2; exit 1; }
     [[ -n "$UNRAID_ZIP" && -f "$UNRAID_ZIP" ]] || { echo "ci requires --unraid-zip PATH." >&2; exit 1; }
     [[ -c /dev/kvm ]] || { echo "/dev/kvm is unavailable on this runner." >&2; exit 1; }
-    for command in truncate qemu-nbd modprobe udevadm partx xorriso; do
+    for command in truncate qemu-nbd modprobe udevadm partx xorriso stat; do
         require_command "$command"
     done
 
@@ -438,6 +545,175 @@ run_ci_test() {
     echo "GitHub-hosted Linux Rescue KVM E2E test passed."
 }
 
+write_ci_identity_map() {
+    local disk short_serial host_id
+    local identity_map="$STATE_DIR/disk-identities.tsv"
+
+    : > "$identity_map"
+    for disk in "${DISKS[@]}"; do
+        short_serial="$(udevadm info --query=property --name="$disk" | awk -F= '/^ID_SERIAL_SHORT=/{print $2; exit}')"
+        host_id="$(udevadm info --query=property --name="$disk" | awk -F= '/^ID_SERIAL=/{print $2; exit}')"
+        [[ "$short_serial" =~ ^[[:alnum:]_.-]+$ && "$host_id" =~ ^[[:alnum:]_.-]+$ ]] || {
+            echo "Unable to resolve the CI identity for $disk." >&2
+            exit 1
+        }
+        printf '%s\t%s\n' "$short_serial" "$host_id" >> "$identity_map"
+    done
+}
+
+launch_ci_menu_vm() {
+    local scenario="${1:-mirrored-nvme}"
+    local kernel="$STATE_DIR/ci-storage/vmlinuz"
+    local initrd="$STATE_DIR/ci-storage/initrd"
+    local monitor_socket="$STATE_DIR/monitor.sock"
+    local pid_file="$STATE_DIR/qemu.pid"
+    local identity_map="$STATE_DIR/disk-identities.tsv"
+    local command_file="$STATE_DIR/installer-command.txt"
+    local qemu_args=()
+    local index pci_address
+
+    for command in qemu-system-x86_64 python3 xorriso; do
+        require_command "$command"
+    done
+
+    xorriso -osirrox on -indev "$ISO" -extract /boot/vmlinuz "$kernel" >/dev/null 2>&1
+    xorriso -osirrox on -indev "$ISO" -extract /boot/initrd "$initrd" >/dev/null 2>&1
+    [[ -s "$kernel" && -s "$initrd" ]] || {
+        echo "Unable to extract the installer kernel and initrd from $ISO." >&2
+        exit 1
+    }
+
+    if [[ "$scenario" == "single-emmc" ]]; then
+        printf '%s\n' "Real ISO menu flow: C, one emulated MMC disk, 16 GiB boot pool, boot pool name, destructive confirmation" > "$command_file"
+    else
+        printf '%s\n' "Real ISO menu flow: C, two NVMe disks, 16 GiB boot pool, boot pool name, destructive confirmation" > "$command_file"
+        write_ci_identity_map
+    fi
+    printf '%s\n' "${DISKS[@]}" > "$STATE_DIR/e2e-host-disks"
+    CI_SERIAL_SOCKET="$STATE_DIR/serial.sock"
+    rm -f "$monitor_socket" "$CI_SERIAL_SOCKET" "$pid_file" "$STATE_DIR/serial.log"
+
+    qemu_args=(
+        -name unraid-iso-installer-menu-e2e
+        -enable-kvm
+        -machine "q35,accel=kvm"
+        -cpu host
+        -m "$RAM_MIB"
+        -smp "$VCPUS"
+        -rtc base=utc
+        -kernel "$kernel"
+        -initrd "$initrd"
+        -append "root=/dev/ram0 rw rdinit=/init loglevel=3 console=ttyS0 consoleblank=0"
+        -drive "file=$ISO,media=cdrom,format=raw,readonly=on"
+        -display none
+        -monitor "unix:$monitor_socket,server=on,wait=off"
+        -serial "unix:$CI_SERIAL_SOCKET,server=on,wait=off"
+        -parallel none
+        -net none
+        -no-reboot
+        -pidfile "$pid_file"
+        -daemonize
+        -drive "file=$SEED_IMAGE,format=raw,if=none,readonly=on,id=installer-seed"
+        -device "virtio-blk-pci,drive=installer-seed,serial=UNRAID_INSTALLER_SEED,bus=pcie.0,addr=8"
+    )
+
+    if [[ "$scenario" == "single-emmc" ]]; then
+        qemu_args+=(
+            -drive "file=${DISKS[0]},format=raw,if=none,id=disk0,cache=none,aio=native"
+            -device "sdhci-pci,id=sdhci"
+            -device "sd-card,drive=disk0"
+        )
+    else
+        qemu_args+=(
+            -fw_cfg "name=opt/unraid/physical-disk-map,file=$identity_map"
+        )
+        for index in "${!DISKS[@]}"; do
+            pci_address=$((3 + index))
+            qemu_args+=(
+                -drive "file=${DISKS[$index]},format=raw,if=none,id=disk$index,cache=none,aio=native"
+                -device "nvme,drive=disk$index,serial=E2E_PHYSICAL_0$((index + 1)),bus=pcie.0,addr=$pci_address"
+            )
+        done
+    fi
+
+    qemu-system-x86_64 "${qemu_args[@]}"
+    [[ -s "$pid_file" ]] || { echo "The ISO menu VM did not create a PID file." >&2; exit 1; }
+    kill -0 "$(cat "$pid_file")" 2>/dev/null || { echo "The ISO menu VM did not remain running." >&2; exit 1; }
+}
+
+run_ci_menu_test() {
+    local disk
+
+    [[ -n "$ISO" && -f "$ISO" ]] || { echo "ci-menu requires --iso PATH." >&2; exit 1; }
+    [[ -n "$UNRAID_ZIP" && -f "$UNRAID_ZIP" ]] || { echo "ci-menu requires --unraid-zip PATH." >&2; exit 1; }
+    [[ -c /dev/kvm ]] || { echo "/dev/kvm is unavailable on this runner." >&2; exit 1; }
+    for command in truncate qemu-nbd modprobe udevadm partx xorriso python3 stat; do
+        require_command "$command"
+    done
+
+    mkdir -p "$STATE_DIR/ci-storage"
+    CI_UDEV_RULE="/run/udev/rules.d/99-unraid-installer-e2e-$$.rules"
+    : > "$CI_UDEV_RULE"
+    trap cleanup_ci EXIT
+
+    create_ci_menu_seed
+    modprobe nbd max_part=16
+    create_ci_nbd_disk "$STATE_DIR/ci-storage/target-1.raw" E2E_PHYSICAL_01
+    create_ci_nbd_disk "$STATE_DIR/ci-storage/target-2.raw" E2E_PHYSICAL_02
+    udevadm control --reload-rules
+    for disk in "${CI_NBD_DISKS[@]}"; do
+        udevadm trigger --action=change --sysname-match="${disk##*/}"
+    done
+    udevadm settle
+    DISKS=("${CI_NBD_DISKS[@]}")
+
+    launch_ci_menu_vm
+    python3 "$SCRIPT_DIR/iso-installer-menu-driver.py" \
+        --socket "$CI_SERIAL_SOCKET" \
+        --transcript "$STATE_DIR/serial.log" \
+        --timeout 1200
+
+    stop_test
+    refresh_ci_nbd_disks
+    ( verify_test )
+    echo "GitHub-hosted ISO installer menu KVM E2E test passed."
+}
+
+run_ci_emmc_test() {
+    [[ -n "$ISO" && -f "$ISO" ]] || { echo "ci-emmc requires --iso PATH." >&2; exit 1; }
+    [[ -c /dev/kvm ]] || { echo "/dev/kvm is unavailable on this runner." >&2; exit 1; }
+    for command in truncate qemu-nbd modprobe udevadm partx xorriso python3 stat; do
+        require_command "$command"
+    done
+
+    mkdir -p "$STATE_DIR/ci-storage"
+    CI_UDEV_RULE="/run/udev/rules.d/99-unraid-installer-e2e-$$.rules"
+    : > "$CI_UDEV_RULE"
+    trap cleanup_ci EXIT
+
+    create_ci_menu_seed single-emmc
+    modprobe nbd max_part=16
+    # QEMU SD cards require a power-of-two size. 64 GiB leaves enough room for
+    # the normal 16 GiB boot pool after the EFI and data-partition reserves.
+    create_ci_nbd_disk "$STATE_DIR/ci-storage/target-1.raw" E2E_EMMC_01 64G
+    udevadm control --reload-rules
+    udevadm trigger --action=change --sysname-match="${CI_NBD_DISKS[0]##*/}"
+    udevadm settle
+    DISKS=("${CI_NBD_DISKS[0]}")
+
+    launch_ci_menu_vm single-emmc
+    python3 "$SCRIPT_DIR/iso-installer-menu-driver.py" \
+        --socket "$CI_SERIAL_SOCKET" \
+        --transcript "$STATE_DIR/serial.log" \
+        --scenario single-emmc \
+        --timeout 1200
+
+    stop_test
+    refresh_ci_nbd_disks
+    ( verify_emmc_test )
+    echo "GitHub-hosted eMMC identity KVM E2E test passed."
+}
+
 stop_test() {
     local pid_file="$STATE_DIR/qemu.pid" pid disk
 
@@ -460,7 +736,7 @@ stop_test() {
         blockdev --flushbufs "$disk"
     done
     sync
-    echo "Installer VM stopped and both test disks were flushed."
+    echo "Installer VM stopped and ${#DISKS[@]} test disk(s) were flushed."
 }
 
 cleanup_verify() {
@@ -632,11 +908,120 @@ verify_test() {
     trap - EXIT
 }
 
+verify_emmc_test() {
+    local disk part2 part3 part4 pid import_root import_output status_output
+    local boot_mount pool_cfg actual_id observed_id esp_mount
+
+    for command in readlink lsblk blockdev udevadm blkid mount umount mountpoint zpool zfs awk sed grep find head mktemp; do
+        require_command "$command"
+    done
+    load_recorded_disks
+    disk="${DISKS[0]}"
+
+    if [[ -s "$STATE_DIR/qemu.pid" ]]; then
+        pid="$(cat "$STATE_DIR/qemu.pid")"
+        if kill -0 "$pid" 2>/dev/null; then
+            echo "QEMU is still running. Stop it before verification." >&2
+            exit 1
+        fi
+    fi
+
+    blockdev --flushbufs "$disk"
+    udevadm settle
+    part2="$(partition_path "$disk" 2)"
+    part3="$(partition_path "$disk" 3)"
+    part4="$(partition_path "$disk" 4)"
+    [[ -b "$part2" && -b "$part3" && -b "$part4" ]] || {
+        echo "Expected p2, p3, and p4 on the emulated eMMC disk." >&2
+        exit 1
+    }
+    [[ "$(blkid -s TYPE -o value "$part2")" == "vfat" ]] || {
+        echo "Expected a vfat EFI partition at $part2." >&2
+        exit 1
+    }
+    [[ "$(blkid -s TYPE -o value "$part3")" == "zfs_member" ]] || {
+        echo "Expected a ZFS member at $part3." >&2
+        exit 1
+    }
+
+    VERIFY_TEMP_DIR="$(mktemp -d)"
+    import_root="$VERIFY_TEMP_DIR/import"
+    esp_mount="$VERIFY_TEMP_DIR/esp"
+    mkdir -p "$import_root" "$esp_mount"
+    trap cleanup_verify EXIT
+
+    mount -o ro "$part2" "$esp_mount"
+    VERIFY_MOUNT_DIRS+=("$esp_mount")
+    [[ -s "$esp_mount/EFI/BOOT/BOOTX64.EFI" ]] || {
+        echo "The emulated eMMC EFI loader is missing." >&2
+        exit 1
+    }
+
+    if zpool list -H -o name 2>/dev/null | grep -qx flash; then
+        echo "A pool named flash is already imported; refusing ambiguous verification." >&2
+        exit 1
+    fi
+    import_output="$(zpool import -d "$part3")"
+    grep -Eq '^[[:space:]]+pool: flash$' <<<"$import_output" || {
+        echo "The installed eMMC flash pool was not found:" >&2
+        printf '%s\n' "$import_output" >&2
+        exit 1
+    }
+
+    zpool import -N -o readonly=on -o cachefile=none -R "$import_root" -d "$part3" flash
+    VERIFY_POOL_IMPORTED=1
+    status_output="$(zpool status -P flash)"
+    if ! grep -q '^ state: ONLINE$' <<<"$status_output" ||
+        ! grep -q 'errors: No known data errors' <<<"$status_output" ||
+        ! grep -Fq "$part3" <<<"$status_output"; then
+        echo "The imported eMMC flash pool is not healthy:" >&2
+        printf '%s\n' "$status_output" >&2
+        exit 1
+    fi
+
+    zfs mount flash/boot
+    boot_mount="$(zfs get -H -o value mountpoint flash/boot)"
+    pool_cfg="$(find "$boot_mount/config/pools" -maxdepth 1 -type f -name '*.cfg' \
+        -exec grep -l '^diskId=' {} \; | head -n1)"
+    [[ -n "$pool_cfg" ]] || { echo "No eMMC boot-pool identity file found." >&2; exit 1; }
+    if grep -q '^diskId\.[0-9]' "$pool_cfg"; then
+        echo "The single-device eMMC pool contains an unexpected second identity." >&2
+        exit 1
+    fi
+
+    actual_id="$(sed -n 's/^diskId="\([^"]*\)"/\1/p' "$pool_cfg")"
+    observed_id="$(tr -d '\r' < "$STATE_DIR/serial.log" | awk '$1 == "mmcblk0" {print $NF; exit}')"
+    [[ -n "$observed_id" ]] || {
+        echo "The installer menu transcript did not contain the resolved mmcblk0 identity." >&2
+        exit 1
+    }
+    [[ "$actual_id" == "$observed_id" ]] || {
+        echo "The persisted eMMC identity differs from the identity shown by the installer." >&2
+        echo "Installer: $observed_id" >&2
+        echo "Persisted: $actual_id" >&2
+        exit 1
+    }
+    [[ "$actual_id" == *_* && "$actual_id" != 0x* ]] || {
+        echo "The persisted eMMC identity does not contain a product-name prefix: $actual_id" >&2
+        exit 1
+    }
+    printf 'mmcblk0\t%s\n' "$actual_id" > "$STATE_DIR/disk-identities.tsv"
+
+    echo "eMMC identity KVM E2E verification passed."
+    echo "Persisted eMMC ID: $actual_id"
+    echo "Partition layout:"
+    lsblk -o NAME,PATH,SIZE,TYPE,FSTYPE,PARTLABEL,MODEL,SERIAL "$disk"
+    cleanup_verify
+    trap - EXIT
+}
+
 case "$ACTION" in
     launch) launch_test ;;
     stop) stop_test ;;
     verify) verify_test ;;
     ci) run_ci_test ;;
+    ci-menu) run_ci_menu_test ;;
+    ci-emmc) run_ci_emmc_test ;;
     help|--help|-h) usage ;;
     *)
         echo "Unknown action: $ACTION" >&2

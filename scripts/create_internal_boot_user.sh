@@ -26,6 +26,10 @@ fi
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1090,SC1091
+. "$SCRIPT_DIR/disk_identity.sh"
+
 UI_MODE="${UI_MODE:-text}"
 ui_backend="text"
 TARGET_DISK_ARG_1=""
@@ -297,8 +301,8 @@ select_target_disk() {
     fi
 
     if [[ "$ui_backend" == "text" ]]; then
-        echo "Available disks:"
-        printf "%-8s %-8s %-30s %-8s %s\n" "NAME" "SIZE" "MODEL" "TRAN" "ID"
+        echo "Available disks:" >&2
+        printf "%-8s %-8s %-30s %-8s %s\n" "NAME" "SIZE" "MODEL" "TRAN" "ID" >&2
     fi
 
     disk_list_file="$(mktemp)"
@@ -333,14 +337,14 @@ select_target_disk() {
         fi
         [[ -n "$disk_id" ]] || disk_id="n/a"
         if [[ "$ui_backend" == "text" ]]; then
-            printf "%-8s %-8s %-30s %-8s %s\n" "$name" "$size" "$model" "$tran" "$disk_id"
+            printf "%-8s %-8s %-30s %-8s %s\n" "$name" "$size" "$model" "$tran" "$disk_id" >&2
         fi
         menu_args+=("$name" "$size | $model | $tran | $disk_id")
         eligible_names+=("$name")
     done < "$disk_list_file"
     rm -f "$disk_list_file"
 
-    echo
+    echo >&2
     if [[ "$ui_backend" != "text" && ${#menu_args[@]} -gt 0 ]]; then
         selected="$(ui_menu_select "$title" "$prompt" "${menu_args[@]}")" || return 1
     else
@@ -711,95 +715,11 @@ resolve_identity_map_id() {
     printf '%s\n' "$mapped_id"
 }
 
-resolve_disk_id() {
-    local disk="$1"
-    local id=""
-    local link resolved
-    local transport=""
-    local model=""
-    local short_serial=""
-
-    id="$(resolve_identity_map_id "$disk" || true)"
-    if [[ -n "$id" ]]; then
-        printf '%s\n' "$id"
-        return 0
-    fi
-    if [[ -n "$IDENTITY_MAP_FILE" ]]; then
-        return 1
-    fi
-
-    sanitize_disk_id() {
-        local raw="$1"
-
-        # Keep USB IDs exactly as discovered.
-        if [[ "$transport" == "usb" ]]; then
-            printf '%s\n' "$raw"
-            return 0
-        fi
-
-        printf '%s\n' "$raw" | sed -E 's/[[:space:]]+/_/g; s/[^[:alnum:]_.-]/_/g; s/^_+//; s/_+$//'
-    }
-
-    transport="$(lsblk -dn -o TRAN "$disk" 2>/dev/null | tr '[:upper:]' '[:lower:]' | head -n1 || true)"
-    if [[ "$transport" != "usb" ]]; then
-        model="$(lsblk -dn -o MODEL "$disk" 2>/dev/null | head -n1 || true)"
-        model="${model//\\x20/ }"
-        model="$(sanitize_disk_id "$model")"
-
-        if command -v udevadm >/dev/null 2>&1; then
-            short_serial="$(udevadm info --query=property --name "$disk" 2>/dev/null | awk -F= '/^ID_SERIAL_SHORT=/{print $2; exit}')"
-        fi
-        if [[ -z "$short_serial" ]]; then
-            short_serial="$(lsblk -dn -o SERIAL "$disk" 2>/dev/null | head -n1 || true)"
-        fi
-        short_serial="${short_serial//\\x20/ }"
-        short_serial="$(sanitize_disk_id "$short_serial")"
-
-        if [[ -n "$model" && -n "$short_serial" ]]; then
-            id="${model}_${short_serial}"
-            id="$(sanitize_disk_id "$id")"
-            printf '%s\n' "$id"
-            return 0
-        fi
-    fi
-
-    if command -v udevadm >/dev/null 2>&1; then
-        id="$(udevadm info --query=property --name "$disk" 2>/dev/null | awk -F= '/^ID_SERIAL=/{print $2; exit}')"
-        if [[ -n "$id" ]]; then
-            id="$(sanitize_disk_id "$id")"
-            printf '%s\n' "$id"
-            return 0
-        fi
-        id="$(udevadm info --query=property --name "$disk" 2>/dev/null | awk -F= '/^ID_WWN=/{print $2; exit}')"
-        if [[ -n "$id" ]]; then
-            id="$(sanitize_disk_id "$id")"
-            printf '%s\n' "$id"
-            return 0
-        fi
-    fi
-
-    for link in /dev/disk/by-id/*; do
-        [[ -e "$link" ]] || continue
-        resolved="$(readlink -f "$link" 2>/dev/null || true)"
-        if [[ "$resolved" == "$disk" ]]; then
-            id="$(basename "$link")"
-            id="$(sanitize_disk_id "$id")"
-            printf '%s\n' "$id"
-            return 0
-        fi
-    done
-
-    id="$(lsblk -dn -o WWN,SERIAL "$disk" 2>/dev/null | awk '{print $1; exit}' || true)"
-    id="$(sanitize_disk_id "$id")"
-    if [[ -n "$id" && "$id" != "-" ]]; then
-        printf '%s\n' "$id"
-        return 0
-    fi
-
-    return 1
-}
-
 resolve_selected_disk_ids() {
+    if command -v udevadm >/dev/null 2>&1; then
+        run_operation udevadm settle --timeout=10 || true
+    fi
+
     DISK_ID="$DISK_ID_OVERRIDE"
     if [[ -n "$DISK_ID" ]]; then
         log_msg "Using supplied host disk ID for $TARGET: $DISK_ID"
@@ -811,6 +731,10 @@ resolve_selected_disk_ids() {
         return 1
     fi
     if [[ -z "$DISK_ID" ]]; then
+        if is_mmc_disk_name "$TARGET_DISK"; then
+            error_msg "ERROR: unable to resolve the canonical eMMC identity for $TARGET. Refusing to write a serial-only Boot Pool identifier."
+            return 1
+        fi
         DISK_ID="$TARGET_DISK"
         log_msg "WARNING: could not resolve stable disk ID for $TARGET; using '$DISK_ID'."
     fi
@@ -828,6 +752,10 @@ resolve_selected_disk_ids() {
             return 1
         fi
         if [[ -z "$DISK_ID_2" ]]; then
+            if is_mmc_disk_name "$TARGET_DISK_2"; then
+                error_msg "ERROR: unable to resolve the canonical eMMC identity for $TARGET_2. Refusing to write a serial-only Boot Pool identifier."
+                return 1
+            fi
             DISK_ID_2="$TARGET_DISK_2"
             log_msg "WARNING: could not resolve stable disk ID for $TARGET_2; using '$DISK_ID_2'."
         fi
