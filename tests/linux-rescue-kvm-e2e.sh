@@ -693,7 +693,9 @@ run_ci_emmc_test() {
 
     create_ci_menu_seed single-emmc
     modprobe nbd max_part=16
-    create_ci_nbd_disk "$STATE_DIR/ci-storage/target-1.raw" E2E_EMMC_01 32G
+    # QEMU SD cards require a power-of-two size. 64 GiB leaves enough room for
+    # the normal 16 GiB boot pool after the EFI and data-partition reserves.
+    create_ci_nbd_disk "$STATE_DIR/ci-storage/target-1.raw" E2E_EMMC_01 64G
     udevadm control --reload-rules
     udevadm trigger --action=change --sysname-match="${CI_NBD_DISKS[0]##*/}"
     udevadm settle
