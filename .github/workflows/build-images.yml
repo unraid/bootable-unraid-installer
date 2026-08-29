@@ -70,7 +70,6 @@ jobs:
         # git ls-remote https://github.com/actions/checkout.git refs/tags/v4
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          ref: ${{ github.ref_name }}
           fetch-depth: 1
 
       - name: Show workflow ref and script version
