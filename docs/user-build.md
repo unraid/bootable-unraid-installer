@@ -53,13 +53,15 @@ latest stable seeded image is published, older stable `Installer-*` releases
 keep their online installer assets when present but have bundled seeded IMG
 assets removed.
 
-The installer version stays equal to the bundled Unraid OS version. The
-release-lock automation writes `Release-As: <OS-version>` into its merge commit,
-and Release Please updates `installer-version.txt` and the manifest to that exact
-version. It then creates the matching `Installer-<version>` tag and GitHub
-Release and invokes the image build for that exact released SHA. Installer-only
-changes wait for the next OS release. Publisher workflows only attach assets to
-that existing release; they never create or move release tags.
+The installer version keeps the bundled Unraid OS version as its base.
+Installer-only releases use Release Please's service-pack sequence, for example
+`Installer-7.3.2-sp.1` and `Installer-7.3.2-sp.2`. The release-lock automation
+writes `Release-As: <OS-version>` into its merge commit, so the next OS update
+resets the sequence to the exact version, such as `Installer-7.3.3`. Release
+Please updates `installer-version.txt` and the manifest, creates the tag and
+GitHub Release, and invokes the image build for that exact released SHA.
+Publisher workflows only attach assets to that existing release; they never
+create or move release tags.
 
 Public release assets are renamed from the internal build artifact names to
 versioned Unraid installer download names at publish time:

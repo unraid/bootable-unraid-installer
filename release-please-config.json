@@ -3,6 +3,7 @@
   "packages": {
     ".": {
       "release-type": "simple",
+      "versioning": "service-pack",
       "component": "Installer",
       "changelog-path": "CHANGELOG.md",
       "version-file": "installer-version.txt"

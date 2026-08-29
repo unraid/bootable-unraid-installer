@@ -760,7 +760,7 @@ sudo cp "$SCRIPT_DIR/create_flash_boot.sh" "$ONBOARDING_ASSET_DIR/create_flash_b
 sudo cp "$SCRIPT_DIR/zip.sh" "$ONBOARDING_ASSET_DIR/zip.sh"
 sudo cp "$SCRIPT_DIR/version_check.sh" "$ONBOARDING_ASSET_DIR/version_check.sh"
 installer_version="$(tr -d '[:space:]' < "$REPO_ROOT/installer-version.txt")"
-if [[ ! "$installer_version" =~ ^[0-9]+(\.[0-9]+)+$ ]]; then
+if [[ ! "$installer_version" =~ ^[0-9]+(\.[0-9]+)+(-sp\.[1-9][0-9]*)?$ ]]; then
   echo "Invalid installer version in installer-version.txt: $installer_version" >&2
   exit 1
 fi

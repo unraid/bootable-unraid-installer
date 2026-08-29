@@ -106,11 +106,18 @@ jobs:
           manifest_version="$(jq -er '.["."]' .release-please-manifest.json)"
           version_file="$(tr -d '[:space:]' < installer-version.txt)"
           os_version="$(jq -er '.version' build/unraid-release-lock.json)"
+          os_pattern="${os_version//./\\.}"
+          if [[ "$release_version" == "$os_version" || \
+                "$release_version" =~ ^${os_pattern}-sp\.[1-9][0-9]*$ ]]; then
+            os_release_matches=true
+          else
+            os_release_matches=false
+          fi
 
           if [[ "$RELEASE_TAG" != "Installer-${release_version}" || \
                 "$manifest_version" != "$release_version" || \
                 "$version_file" != "$release_version" || \
-                "$os_version" != "$release_version" ]]; then
+                "$os_release_matches" != "true" ]]; then
             echo "Release version metadata is inconsistent:" >&2
             echo "  tag=$RELEASE_TAG" >&2
             echo "  manifest=$manifest_version" >&2
