@@ -342,6 +342,21 @@ EOF
     CI_NBD_DISKS+=("$nbd_disk")
 }
 
+refresh_ci_nbd_disks() {
+    local index disk image
+
+    for disk in "${CI_NBD_DISKS[@]}"; do
+        qemu-nbd --disconnect "$disk"
+    done
+    for index in "${!CI_NBD_DISKS[@]}"; do
+        disk="${CI_NBD_DISKS[$index]}"
+        image="$STATE_DIR/ci-storage/target-$((index + 1)).raw"
+        qemu-nbd --connect="$disk" --format=raw "$image"
+        udevadm trigger --action=change --sysname-match="${disk##*/}"
+    done
+    udevadm settle
+}
+
 run_ci_test() {
     local pid deadline result=""
 
@@ -402,6 +417,7 @@ run_ci_test() {
     fi
 
     stop_test
+    refresh_ci_nbd_disks
     ( verify_test )
     echo "GitHub-hosted Linux Rescue KVM E2E test passed."
 }
@@ -517,7 +533,11 @@ verify_test() {
     VERIFY_MOUNT_DIRS+=("$esp0_mount")
     mount -o ro "${part2_paths[1]}" "$esp1_mount"
     VERIFY_MOUNT_DIRS+=("$esp1_mount")
-    cmp "$esp0_mount/EFI/BOOT/BOOTX64.EFI" "$esp1_mount/EFI/BOOT/BOOTX64.EFI"
+    if ! cmp "$esp0_mount/EFI/BOOT/BOOTX64.EFI" "$esp1_mount/EFI/BOOT/BOOTX64.EFI"; then
+        echo "Mirrored EFI loaders differ after reopening the CI disk images." >&2
+        sha256sum "$esp0_mount/EFI/BOOT/BOOTX64.EFI" "$esp1_mount/EFI/BOOT/BOOTX64.EFI" >&2
+        exit 1
+    fi
 
     if zpool list -H -o name 2>/dev/null | grep -qx flash; then
         echo "A pool named flash is already imported; refusing ambiguous verification." >&2
