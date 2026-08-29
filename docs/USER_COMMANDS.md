@@ -217,7 +217,9 @@ the handoff automatically; the generated command with explicit overrides is
 a fallback. The release-published launcher downloads and SHA256-verifies its
 matching online ISO automatically. `--iso PATH` selects a local ISO instead;
 `--release-tag Installer-<version>` selects a release when running the source
-tree version of the launcher.
+tree version of the launcher. With no `--disk` arguments, it lists idle whole
+disks and asks the user which one or two to pass through. Explicit `--disk`
+arguments support non-interactive automation.
 
 ### Restore Existing Internal Boot
 

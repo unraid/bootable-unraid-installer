@@ -17,12 +17,11 @@ DISKS=()
 usage() {
     cat <<'EOF'
 Usage:
-  hetzner-rescue-vm.sh --disk DEVICE [--disk DEVICE] [options]
-
-Required:
-  --disk DEVICE       Physical whole disk; repeat for a two-disk mirror
+  hetzner-rescue-vm.sh [--disk DEVICE] [--disk DEVICE] [options]
 
 Options:
+  --disk DEVICE       Physical whole disk; repeat for a two-disk mirror
+                      Omit to choose interactively from idle whole disks
   --iso PATH          Use a local installer ISO instead of downloading one
   --release-tag TAG   Download the online ISO from this Installer-* release
   --state-dir PATH    VM state directory (default: /root/unraid-installer-vm)
@@ -90,8 +89,8 @@ if [[ -n "$ISO" && -n "$RELEASE_TAG" ]]; then
     echo "Use either --iso or --release-tag, not both." >&2
     exit 2
 fi
-[[ ${#DISKS[@]} -ge 1 && ${#DISKS[@]} -le 2 ]] || {
-    echo "Provide one or two --disk arguments." >&2
+[[ ${#DISKS[@]} -le 2 ]] || {
+    echo "Provide no more than two --disk arguments." >&2
     exit 1
 }
 if [[ ! "$RAM_MIB" =~ ^[0-9]+$ ]] || (( RAM_MIB < 2048 )); then
@@ -287,6 +286,68 @@ assert_disk_idle() {
     fi
 }
 
+choose_disks_interactively() {
+    local candidate answer selection index details
+    local -a candidates selected
+
+    [[ -t 0 && -t 1 ]] || {
+        echo "No --disk arguments were provided and no interactive terminal is available." >&2
+        echo "Run this launcher from a terminal or pass one or two --disk DEVICE arguments." >&2
+        return 1
+    }
+
+    candidates=()
+    while read -r candidate; do
+        if assert_disk_idle "$candidate" >/dev/null 2>&1; then
+            candidates+=("$candidate")
+        fi
+    done < <(lsblk -dnpo NAME,TYPE | awk '$2 == "disk" {print $1}')
+
+    ((${#candidates[@]} > 0)) || {
+        echo "No idle whole disks are available for installer passthrough." >&2
+        return 1
+    }
+
+    echo "Idle whole disks available to the installer:"
+    for index in "${!candidates[@]}"; do
+        details="$(lsblk -dn -o SIZE,MODEL,SERIAL "${candidates[$index]}" | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')"
+        printf '  [%d] %s  %s\n' "$((index + 1))" "${candidates[$index]}" "$details"
+    done
+    echo ""
+
+    if ((${#candidates[@]} <= 2)); then
+        printf 'Pass %s to the installer VM? [y/N] ' \
+            "$(IFS=', '; echo "${candidates[*]}")"
+        read -r answer
+        [[ "$answer" =~ ^[Yy]([Ee][Ss])?$ ]] || {
+            echo "Disk selection cancelled."
+            return 1
+        }
+        DISKS=("${candidates[@]}")
+        return 0
+    fi
+
+    printf 'Select one or two disk numbers separated by a space: '
+    read -r -a selected
+    [[ ${#selected[@]} -ge 1 && ${#selected[@]} -le 2 ]] || {
+        echo "Select one or two disks." >&2
+        return 1
+    }
+    DISKS=()
+    for selection in "${selected[@]}"; do
+        [[ "$selection" =~ ^[0-9]+$ ]] || {
+            echo "Invalid disk number: $selection" >&2
+            return 1
+        }
+        index=$((selection - 1))
+        ((index >= 0 && index < ${#candidates[@]})) || {
+            echo "Disk number is out of range: $selection" >&2
+            return 1
+        }
+        DISKS+=("${candidates[$index]}")
+    done
+}
+
 ovmf_pair="$(find_ovmf_pair || true)"
 [[ -n "$ovmf_pair" ]] || {
     echo "Could not find a matching OVMF CODE/VARS pair." >&2
@@ -294,6 +355,14 @@ ovmf_pair="$(find_ovmf_pair || true)"
 }
 OVMF_CODE="${ovmf_pair%%|*}"
 OVMF_VARS_TEMPLATE="${ovmf_pair#*|}"
+
+if ((${#DISKS[@]} == 0)); then
+    choose_disks_interactively
+fi
+[[ ${#DISKS[@]} -ge 1 && ${#DISKS[@]} -le 2 ]] || {
+    echo "Select one or two physical disks." >&2
+    exit 1
+}
 
 REAL_DISKS=()
 HOST_IDS=()

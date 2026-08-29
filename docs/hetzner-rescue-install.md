@@ -45,7 +45,7 @@ Package names vary by Rescue image. The helper needs:
 Keep VNC and noVNC bound to localhost and reach them through SSH. Never expose
 either service on the public interface.
 
-## 2. Identify the physical disks
+## 2. Review the physical disks
 
 Use stable `/dev/disk/by-id` paths rather than kernel names:
 
@@ -55,8 +55,9 @@ lsblk -o NAME,SIZE,MODEL,SERIAL,FSTYPE,MOUNTPOINTS
 ```
 
 Linux can swap `nvme0n1` and `nvme1n1` across reboots. Match disks by model
-and serial. The launcher confirms that no target disk or partition is mounted,
-active swap, claimed by another block device, or part of an imported ZFS pool.
+and serial. The launcher discovers idle whole disks and asks which one or two
+to pass to the installer VM. It excludes disks with mounted partitions, active
+swap, block-device holders, or membership in an imported ZFS pool.
 
 ## 3. Start the official installer in QEMU
 
@@ -65,9 +66,7 @@ Download and run the launcher published with the latest installer release:
 ```bash
 curl -fsSL https://github.com/unraid/bootable-unraid-installer/releases/latest/download/unraid-installer-hetzner-rescue.sh \
   -o /tmp/unraid-hetzner.sh && \
-sudo bash /tmp/unraid-hetzner.sh \
-  --disk /dev/disk/by-id/nvme-<first-physical-id> \
-  --disk /dev/disk/by-id/nvme-<second-physical-id>
+sudo bash /tmp/unraid-hetzner.sh
 ```
 
 The released launcher is pinned to the same release as its ISO. It downloads
@@ -75,7 +74,8 @@ the online ISO and SHA256 checksum, verifies the payload, and caches the ISO
 under `/root/unraid-installer-vm`. A repeat run reuses the cached ISO only
 when its SHA256 still matches. Use `--iso PATH` for an offline or development
 ISO, or `--release-tag Installer-<version>` with a launcher copied directly
-from the source tree.
+from the source tree. `--disk DEVICE` remains available for non-interactive
+automation and can be repeated for a two-disk mirror.
 
 The helper:
 
