@@ -1,9 +1,11 @@
 name: Release Please
 
 on:
-  push:
+  pull_request:
     branches:
       - main
+    types:
+      - closed
   workflow_dispatch:
     inputs:
       release_tag:
@@ -24,7 +26,11 @@ concurrency:
 jobs:
   release:
     name: Create or resolve the installer release
-    if: ${{ github.repository == 'unraid/bootable-unraid-installer' }}
+    if: >-
+      github.repository == 'unraid/bootable-unraid-installer' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.pull_request.merged == true &&
+        startsWith(github.event.pull_request.head.ref, 'release-please--branches--main--components--Installer')))
     runs-on: ubuntu-24.04
     outputs:
       release_created: ${{ steps.release_please.outputs.release_created || steps.manual_release.outputs.release_created || 'false' }}
@@ -33,7 +39,7 @@ jobs:
     steps:
       - name: Create the release pull request or GitHub Release
         id: release_please
-        if: ${{ github.event_name == 'push' || inputs.release_tag == '' }}
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.release_tag == '' }}
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}

@@ -199,11 +199,14 @@ jobs:
 
           gh pr comment "$PR_NUMBER" --body-file "$body"
 
+          merge_body="Automated Unraid OS release lock update after successful installer image validation build: ${run_url}"
+          merge_body+=$'\n\n'
+          merge_body+="Release-As: ${LATEST_VERSION}"
           gh pr merge "$PR_NUMBER" \
             --squash \
             --delete-branch \
             --subject "fix(deps): update bundled Unraid OS to ${LATEST_VERSION}" \
-            --body "Automated Unraid OS release lock update after successful installer image validation build: ${run_url}"
+            --body "$merge_body"
 
           # A merge performed with GITHUB_TOKEN does not emit another push
           # workflow. workflow_dispatch is the supported exception, so invoke
