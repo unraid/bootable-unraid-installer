@@ -346,9 +346,9 @@ create_ci_menu_seed() {
 }
 
 create_ci_nbd_disk() {
-    local image="$1" serial="$2" nbd_disk="" nbd_name candidate
+    local image="$1" serial="$2" size="${3:-36G}" nbd_disk="" nbd_name candidate
 
-    truncate -s 36G "$image"
+    truncate -s "$size" "$image"
     for candidate in /dev/nbd*; do
         [[ "$candidate" =~ p[0-9]+$ ]] && continue
         nbd_name="${candidate##*/}"
@@ -615,7 +615,7 @@ run_ci_emmc_test() {
 
     create_ci_menu_seed
     modprobe nbd max_part=16
-    create_ci_nbd_disk "$STATE_DIR/ci-storage/target-1.raw" E2E_EMMC_01
+    create_ci_nbd_disk "$STATE_DIR/ci-storage/target-1.raw" E2E_EMMC_01 64G
     udevadm control --reload-rules
     udevadm trigger --action=change --sysname-match="${CI_NBD_DISKS[0]##*/}"
     udevadm settle
