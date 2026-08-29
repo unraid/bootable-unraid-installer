@@ -53,6 +53,13 @@ Package names vary by Rescue image. The helper needs:
 - `udevadm`, `lsblk`, and `blockdev`; and
 - `curl` or `wget` and `sha256sum` to download and verify the released ISO.
 
+The launcher uses QEMU's built-in `user` network backend when available. If
+that backend is absent, it can use QEMU's `passt` backend when the `passt`
+helper is installed. As an explicit fallback, `--bridge INTERFACE` attaches a
+tap device to an existing Linux bridge. Use the bridge option only after
+confirming that the provider permits bridged guest traffic and that the named
+bridge is the intended host network.
+
 Keep VNC and noVNC bound to localhost and reach them through SSH. Never expose
 either service on the public interface.
 
@@ -86,14 +93,17 @@ under `/root/unraid-installer-vm`. A repeat run reuses the cached ISO only
 when its SHA256 still matches. Use `--iso PATH` for an offline or development
 ISO, or `--release-tag Installer-<version>` with a launcher copied directly
 from the source tree. `--disk DEVICE` remains available for non-interactive
-automation and can be repeated for a two-disk mirror.
+automation and can be repeated for a two-disk mirror. If QEMU has neither a
+usable `user` backend nor an installed `passt` helper, pass an existing Linux
+bridge explicitly, for example `--bridge br0`.
 
 The helper:
 
 - refuses partitions and target disks that are mounted, active swap, held by
   another block device, or part of an imported ZFS pool;
 - records each host-visible model and serial;
-- starts a UEFI KVM guest with NAT networking;
+- starts a UEFI KVM guest with QEMU user or `passt` networking, or with an
+  explicitly selected existing Linux bridge;
 - passes one or two physical whole disks through as NVMe devices;
 - uses stable guest PCI addresses so disk argument order is predictable;
 - passes the physical identity map through QEMU `fw_cfg` without adding a

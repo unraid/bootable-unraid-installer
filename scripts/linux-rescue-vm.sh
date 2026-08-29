@@ -13,6 +13,7 @@ STATE_DIR="/root/unraid-installer-vm"
 RAM_MIB="8192"
 VCPUS="4"
 VNC_DISPLAY="1"
+NETWORK_BRIDGE=""
 DISKS=()
 
 usage() {
@@ -29,6 +30,8 @@ Options:
   --ram MIB           Guest memory in MiB (default: 8192)
   --cpus COUNT        Guest vCPU count (default: 4)
   --vnc-display N     Localhost VNC display (default: 1, TCP port 5901)
+  --bridge INTERFACE  Attach the guest NIC to this existing Linux bridge when
+                      QEMU user networking and passt are unavailable
   --help              Show this help
 
 This helper only boots the installer. Power the VM off after installation;
@@ -73,6 +76,11 @@ while (($#)); do
             VNC_DISPLAY="$2"
             shift 2
             ;;
+        --bridge)
+            [[ $# -ge 2 ]] || { echo "Missing value for --bridge" >&2; exit 2; }
+            NETWORK_BRIDGE="$2"
+            shift 2
+            ;;
         --help|-h)
             usage
             exit 0
@@ -106,6 +114,10 @@ fi
     echo "--vnc-display must be a non-negative integer." >&2
     exit 1
 }
+if [[ -n "$NETWORK_BRIDGE" && ! "$NETWORK_BRIDGE" =~ ^[[:alnum:]_.:-]+$ ]]; then
+    echo "--bridge contains unsupported characters: $NETWORK_BRIDGE" >&2
+    exit 1
+fi
 
 download_file() {
     local url="$1" destination="$2"
@@ -215,6 +227,69 @@ QEMU_BIN="$(find_qemu_binary || true)"
 }
 command -v udevadm >/dev/null 2>&1 || { echo "udevadm is required." >&2; exit 1; }
 [[ -c /dev/kvm ]] || { echo "/dev/kvm is unavailable; enable virtualization support first." >&2; exit 1; }
+
+qemu_has_netdev_backend() {
+    local backend="$1"
+    "$QEMU_BIN" -netdev help 2>&1 | awk '/^Available netdev backend types:$/ {found=1; next} found && NF {print $1}' | grep -qx "$backend"
+}
+
+select_network_args() {
+    NETWORK_ARGS=()
+
+    if qemu_has_netdev_backend user; then
+        NETWORK_ARGS=(-netdev "user,id=net0" -device "e1000,netdev=net0")
+        echo "Using QEMU user networking."
+        return 0
+    fi
+
+    if qemu_has_netdev_backend passt && command -v passt >/dev/null 2>&1; then
+        NETWORK_ARGS=(-netdev "passt,id=net0" -device "e1000,netdev=net0")
+        echo "Using passt networking."
+        return 0
+    fi
+
+    if [[ -z "$NETWORK_BRIDGE" ]]; then
+        echo "QEMU has no usable user or passt network backend." >&2
+        echo "Install a QEMU user-network helper or pass --bridge with an existing Linux bridge." >&2
+        return 1
+    fi
+
+    command -v ip >/dev/null 2>&1 || {
+        echo "iproute2 is required for --bridge." >&2
+        return 1
+    }
+    [[ -c /dev/net/tun ]] || {
+        echo "/dev/net/tun is required for --bridge." >&2
+        return 1
+    }
+    [[ -d "/sys/class/net/${NETWORK_BRIDGE}/bridge" ]] || {
+        echo "Not an existing Linux bridge: $NETWORK_BRIDGE" >&2
+        return 1
+    }
+    qemu_has_netdev_backend tap || {
+        echo "QEMU does not provide the tap network backend required by --bridge." >&2
+        return 1
+    }
+
+    tap_up="$STATE_DIR/tap-up.sh"
+    tap_down="$STATE_DIR/tap-down.sh"
+    cat > "$tap_up" <<EOF
+#!/bin/bash
+set -euo pipefail
+ip link set "\$1" master "$NETWORK_BRIDGE"
+ip link set "\$1" up
+EOF
+    cat > "$tap_down" <<'EOF'
+#!/bin/bash
+ip link set "$1" nomaster 2>/dev/null || true
+EOF
+    chmod 0755 "$tap_up" "$tap_down"
+    NETWORK_ARGS=(
+        -netdev "tap,id=net0,script=$tap_up,downscript=$tap_down"
+        -device "e1000,netdev=net0"
+    )
+    echo "Using explicit bridge networking through $NETWORK_BRIDGE."
+}
 
 find_ovmf_pair() {
     local code vars
@@ -417,6 +492,7 @@ if [[ ${#HOST_IDS[@]} -eq 2 && "${HOST_IDS[0]}" == "${HOST_IDS[1]}" ]]; then
 fi
 
 mkdir -p "$STATE_DIR"
+select_network_args
 PID_FILE="$STATE_DIR/qemu.pid"
 if [[ -s "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
     echo "A VM recorded in $PID_FILE is already running." >&2
@@ -467,8 +543,6 @@ QEMU_ARGS=(
     -drive "file=$ISO,media=cdrom,format=raw,readonly=on"
     -boot "once=d,menu=on"
     -no-reboot
-    -netdev "user,id=net0"
-    -device "e1000,netdev=net0"
     -fw_cfg "name=opt/unraid/physical-disk-map,file=$IDENTITY_MAP"
     -vga none
     -device virtio-vga
@@ -480,6 +554,7 @@ QEMU_ARGS=(
     -pidfile "$PID_FILE"
     -daemonize
 )
+QEMU_ARGS+=("${NETWORK_ARGS[@]}")
 
 for index in "${!REAL_DISKS[@]}"; do
     pci_address=$((3 + index))

@@ -221,7 +221,10 @@ matching online ISO automatically. `--iso PATH` selects a local ISO instead;
 `--release-tag Installer-<version>` selects a release when running the source
 tree version of the launcher. With no `--disk` arguments, it lists idle whole
 disks and asks the user which one or two to pass through. Explicit `--disk`
-arguments support non-interactive automation.
+arguments support non-interactive automation. Networking prefers QEMU's
+built-in `user` backend, then an installed `passt` helper. On a Rescue host
+without either, `--bridge INTERFACE` explicitly attaches the guest to an
+existing Linux bridge.
 
 ### Restore Existing Internal Boot
 
