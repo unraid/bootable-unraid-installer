@@ -492,6 +492,7 @@ jobs:
           qemu-system-x86_64 --version
 
       - name: Download pinned Unraid OS payload
+        if: ${{ matrix.action != 'ci-emmc' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -508,14 +509,19 @@ jobs:
         run: |
           set -euo pipefail
           iso="$(find artifacts/e2e -maxdepth 1 -type f -name 'install-user.iso' -print -quit)"
-          unraid_zip="$(find artifacts/e2e -maxdepth 1 -type f -name 'unRAIDServer-*-x86_64.zip' -print -quit)"
-          [[ -n "$iso" && -n "$unraid_zip" ]]
-          sudo tests/linux-rescue-kvm-e2e.sh "${{ matrix.action }}" \
-            --iso "$iso" \
-            --unraid-zip "$unraid_zip" \
-            --state-dir "$RUNNER_TEMP/${{ matrix.state_dir }}" \
-            --ram 4096 \
+          [[ -n "$iso" ]]
+          args=(
+            --iso "$iso"
+            --state-dir "$RUNNER_TEMP/${{ matrix.state_dir }}"
+            --ram 4096
             --cpus 2
+          )
+          if [[ "${{ matrix.action }}" != "ci-emmc" ]]; then
+            unraid_zip="$(find artifacts/e2e -maxdepth 1 -type f -name 'unRAIDServer-*-x86_64.zip' -print -quit)"
+            [[ -n "$unraid_zip" ]]
+            args+=(--unraid-zip "$unraid_zip")
+          fi
+          sudo tests/linux-rescue-kvm-e2e.sh "${{ matrix.action }}" "${args[@]}"
 
       - name: Upload KVM E2E evidence
         if: ${{ always() }}

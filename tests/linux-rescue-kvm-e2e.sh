@@ -56,7 +56,8 @@ Options:
   --vnc-display N     Localhost VNC display (default: 1)
   --bridge INTERFACE  Existing Linux bridge for hosts without user/passt networking
   --seed-image PATH   Read-only installer persistence seed passed to the launcher
-  --unraid-zip PATH   Verified Unraid OS ZIP used to build the ci action seed
+  --unraid-zip PATH   Verified Unraid OS ZIP used by ci and ci-menu. ci-emmc
+                      creates a small checksum-valid payload fixture instead.
   --help              Show this help
 
 This harness is destructive. Use only disks supplied by a disposable test
@@ -333,12 +334,49 @@ EOF
     rm -rf "$seed_root"
 }
 
+create_ci_emmc_fixture_zip() {
+    local destination="$1"
+
+    python3 - "$destination" <<'PY'
+import hashlib
+import sys
+import zipfile
+
+destination = sys.argv[1]
+payload = b"Unraid eMMC identity E2E fixture\n"
+checksum = hashlib.sha256(payload).hexdigest().encode() + b"\n"
+
+with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+    archive.writestr("bzimage", payload)
+    archive.writestr("bzimage.sha256", checksum)
+    archive.writestr("config/", b"")
+    archive.writestr("config/ident.cfg", b'NAME="eMMC Identity E2E"\n')
+PY
+}
+
 create_ci_menu_seed() {
-    local seed_root="$STATE_DIR/ci-storage/seed-root"
+    local scenario="${1:-mirrored-nvme}"
+    local seed_root="$STATE_DIR/ci-storage/seed-root" fixture_name
 
     SEED_IMAGE="$STATE_DIR/ci-storage/installer-menu-seed.iso"
     mkdir -p "$seed_root/runtime" "$seed_root/zips"
-    cp "$UNRAID_ZIP" "$seed_root/zips/"
+    if [[ "$scenario" == "single-emmc" ]]; then
+        fixture_name="$(python3 - "$REPO_ROOT/build/unraid-release-lock.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as release_lock:
+    print(json.load(release_lock)["filename"])
+PY
+)"
+        [[ "$fixture_name" == unRAIDServer-*-x86_64.zip && "$fixture_name" != */* ]] || {
+            echo "Invalid fixture filename from build/unraid-release-lock.json: $fixture_name" >&2
+            exit 1
+        }
+        create_ci_emmc_fixture_zip "$seed_root/zips/$fixture_name"
+    else
+        cp "$UNRAID_ZIP" "$seed_root/zips/"
+    fi
     printf '%s\n' text > "$seed_root/runtime/menu-backend"
     sync
     xorriso -as mkisofs -quiet -V INSTALL-PERSIST -o "$SEED_IMAGE" "$seed_root"
@@ -358,7 +396,7 @@ create_ci_nbd_disk() {
         fi
     done
     [[ -n "$nbd_disk" ]] || { echo "No unused NBD device is available." >&2; exit 1; }
-    qemu-nbd --connect="$nbd_disk" --format=raw "$image"
+    connect_ci_nbd_image "$nbd_disk" "$image"
     udevadm settle
     cat >> "$CI_UDEV_RULE" <<EOF
 KERNEL=="$nbd_name", ENV{ID_MODEL}="CI_DISK", ENV{ID_SERIAL_SHORT}="$serial", ENV{ID_SERIAL}="CI_DISK_$serial"
@@ -366,16 +404,57 @@ EOF
     CI_NBD_DISKS+=("$nbd_disk")
 }
 
+wait_for_ci_nbd_detach() {
+    local disk="$1" nbd_name
+    nbd_name="${disk##*/}"
+
+    for _ in {1..200}; do
+        if [[ ! -s "/sys/class/block/$nbd_name/pid" ]] &&
+            [[ "$(blockdev --getsize64 "$disk" 2>/dev/null || printf '0')" == "0" ]]; then
+            return 0
+        fi
+        sleep 0.1
+    done
+    return 1
+}
+
+connect_ci_nbd_image() {
+    local disk="$1" image="$2" expected_size actual_size
+
+    expected_size="$(stat -c %s "$image")"
+    for attempt in 1 2 3; do
+        if qemu-nbd --connect="$disk" --format=raw "$image"; then
+            for _ in {1..100}; do
+                actual_size="$(blockdev --getsize64 "$disk" 2>/dev/null || printf '0')"
+                if [[ "$actual_size" == "$expected_size" ]]; then
+                    return 0
+                fi
+                sleep 0.1
+            done
+        fi
+        echo "NBD attach attempt $attempt did not expose $expected_size bytes on $disk; retrying." >&2
+        qemu-nbd --disconnect "$disk" >/dev/null 2>&1 || true
+        wait_for_ci_nbd_detach "$disk" || true
+    done
+
+    echo "Unable to attach $image to $disk with the expected size." >&2
+    return 1
+}
+
 refresh_ci_nbd_disks() {
     local index disk image part2 part3 part4
 
     for disk in "${CI_NBD_DISKS[@]}"; do
         qemu-nbd --disconnect "$disk"
+        wait_for_ci_nbd_detach "$disk" || {
+            echo "Timed out waiting for $disk to detach before host verification." >&2
+            exit 1
+        }
     done
     for index in "${!CI_NBD_DISKS[@]}"; do
         disk="${CI_NBD_DISKS[$index]}"
         image="$STATE_DIR/ci-storage/target-$((index + 1)).raw"
-        if ! qemu-nbd --connect="$disk" --format=raw "$image"; then
+        if ! connect_ci_nbd_image "$disk" "$image"; then
             echo "Unable to reopen $image on $disk for host verification." >&2
             exit 1
         fi
@@ -407,7 +486,7 @@ run_ci_test() {
     [[ -n "$ISO" && -f "$ISO" ]] || { echo "ci requires --iso PATH." >&2; exit 1; }
     [[ -n "$UNRAID_ZIP" && -f "$UNRAID_ZIP" ]] || { echo "ci requires --unraid-zip PATH." >&2; exit 1; }
     [[ -c /dev/kvm ]] || { echo "/dev/kvm is unavailable on this runner." >&2; exit 1; }
-    for command in truncate qemu-nbd modprobe udevadm partx xorriso; do
+    for command in truncate qemu-nbd modprobe udevadm partx xorriso stat; do
         require_command "$command"
     done
 
@@ -568,7 +647,7 @@ run_ci_menu_test() {
     [[ -n "$ISO" && -f "$ISO" ]] || { echo "ci-menu requires --iso PATH." >&2; exit 1; }
     [[ -n "$UNRAID_ZIP" && -f "$UNRAID_ZIP" ]] || { echo "ci-menu requires --unraid-zip PATH." >&2; exit 1; }
     [[ -c /dev/kvm ]] || { echo "/dev/kvm is unavailable on this runner." >&2; exit 1; }
-    for command in truncate qemu-nbd modprobe udevadm partx xorriso python3; do
+    for command in truncate qemu-nbd modprobe udevadm partx xorriso python3 stat; do
         require_command "$command"
     done
 
@@ -602,9 +681,8 @@ run_ci_menu_test() {
 
 run_ci_emmc_test() {
     [[ -n "$ISO" && -f "$ISO" ]] || { echo "ci-emmc requires --iso PATH." >&2; exit 1; }
-    [[ -n "$UNRAID_ZIP" && -f "$UNRAID_ZIP" ]] || { echo "ci-emmc requires --unraid-zip PATH." >&2; exit 1; }
     [[ -c /dev/kvm ]] || { echo "/dev/kvm is unavailable on this runner." >&2; exit 1; }
-    for command in truncate qemu-nbd modprobe udevadm partx xorriso python3; do
+    for command in truncate qemu-nbd modprobe udevadm partx xorriso python3 stat; do
         require_command "$command"
     done
 
@@ -613,9 +691,9 @@ run_ci_emmc_test() {
     : > "$CI_UDEV_RULE"
     trap cleanup_ci EXIT
 
-    create_ci_menu_seed
+    create_ci_menu_seed single-emmc
     modprobe nbd max_part=16
-    create_ci_nbd_disk "$STATE_DIR/ci-storage/target-1.raw" E2E_EMMC_01 64G
+    create_ci_nbd_disk "$STATE_DIR/ci-storage/target-1.raw" E2E_EMMC_01 32G
     udevadm control --reload-rules
     udevadm trigger --action=change --sysname-match="${CI_NBD_DISKS[0]##*/}"
     udevadm settle
