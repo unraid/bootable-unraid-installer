@@ -1,6 +1,18 @@
 name: Build Install Images
 
 on:
+  pull_request:
+    paths:
+      - "build/**"
+      - "scripts/**"
+      - ".github/workflows/build-images.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "build/**"
+      - "scripts/**"
+      - ".github/workflows/build-images.yml"
   workflow_dispatch:
     inputs:
       persist_fs:
@@ -44,11 +56,13 @@ permissions:
 jobs:
   build-images:
     name: Build install images
+    if: ${{ github.event_name != 'pull_request' || !startsWith(github.head_ref, 'update/unraid-os-') }}
     runs-on: ubuntu-24.04
     concurrency:
-      group: install-images-${{ github.ref_name }}-user
-      cancel-in-progress: false
+      group: install-images-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
     env:
+      ARTIFACT_RETENTION_DAYS: ${{ github.event_name == 'pull_request' && 3 || 14 }}
       PUBLISH_DIR: ${{ github.workspace }}/artifacts/published
     steps:
       - name: Checkout repository
@@ -78,9 +92,9 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: zfs-live-build
-          key: install-build-v3-${{ runner.os }}-${{ hashFiles('build/version-lock.json') }}-run-${{ github.run_id }}
+          key: install-build-v4-${{ runner.os }}-${{ hashFiles('build/version-lock.json', 'scripts/config', 'scripts/build-kernel-zfs-cache.sh') }}-run-${{ github.run_id }}
           restore-keys: |
-            install-build-v3-${{ runner.os }}-${{ hashFiles('build/version-lock.json') }}-
+            install-build-v4-${{ runner.os }}-${{ hashFiles('build/version-lock.json', 'scripts/config', 'scripts/build-kernel-zfs-cache.sh') }}-
 
       - name: Sanitize restored build cache
         shell: bash
@@ -151,19 +165,23 @@ jobs:
       - name: Build images
         shell: bash
         env:
-          PUBLISH_ENABLED: ${{ inputs.publish && '1' || '0' }}
+          CLEAN_BUILD: ${{ inputs.clean_build || false }}
+          FORCE_BUILD: ${{ github.event_name != 'workflow_dispatch' || inputs.force }}
+          MENU_BACKEND: ${{ inputs.menu_backend || 'auto' }}
+          PERSIST_FS: ${{ inputs.persist_fs || 'vfat' }}
+          PUBLISH_ENABLED: ${{ github.event_name == 'workflow_dispatch' && inputs.publish && '1' || '0' }}
           SEED_DIR: ${{ github.workspace }}/persistent
           VERSION_LOCK_FILE: ${{ github.workspace }}/build/version-lock.json
         run: |
           set -euo pipefail
 
-          args=(--mode "full" --persist-fs "${{ inputs.persist_fs }}" --menu-backend "${{ inputs.menu_backend }}")
+          args=(--mode "full" --persist-fs "$PERSIST_FS" --menu-backend "$MENU_BACKEND")
 
-          if [[ "${{ inputs.clean_build }}" == "true" ]]; then
+          if [[ "$CLEAN_BUILD" == "true" ]]; then
             args+=(--clean-build)
           fi
 
-          if [[ "${{ inputs.force }}" == "true" ]]; then
+          if [[ "$FORCE_BUILD" == "true" ]]; then
             args+=(--force)
           fi
 
@@ -276,7 +294,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: install-user-iso-${{ github.run_number }}
-          retention-days: 14
+          retention-days: ${{ env.ARTIFACT_RETENTION_DAYS }}
           path: artifacts/install-user.iso
           if-no-files-found: warn
 
@@ -285,7 +303,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: install-user-img-${{ github.run_number }}
-          retention-days: 14
+          retention-days: ${{ env.ARTIFACT_RETENTION_DAYS }}
           path: artifacts/install-user.img
           if-no-files-found: warn
 
@@ -294,7 +312,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: install-user-minimal-img-${{ github.run_number }}
-          retention-days: 14
+          retention-days: ${{ env.ARTIFACT_RETENTION_DAYS }}
           path: artifacts/install-user-minimal.img
           if-no-files-found: warn
 
@@ -303,7 +321,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: install-user-checksums-${{ github.run_number }}
-          retention-days: 14
+          retention-days: ${{ env.ARTIFACT_RETENTION_DAYS }}
           path: artifacts/checksums.sha256
           if-no-files-found: warn
 
@@ -312,6 +330,6 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: install-user-published-${{ github.run_number }}
-          retention-days: 14
+          retention-days: ${{ env.ARTIFACT_RETENTION_DAYS }}
           path: artifacts/published/*
           if-no-files-found: warn
