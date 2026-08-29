@@ -280,6 +280,8 @@ QEMU_ARGS=(
     -netdev "user,id=net0"
     -device "e1000,netdev=net0"
     -fw_cfg "name=opt/unraid/physical-disk-map,file=$IDENTITY_MAP"
+    -vga none
+    -device virtio-vga
     -display none
     -vnc "127.0.0.1:$VNC_DISPLAY"
     -monitor "unix:$MONITOR_SOCKET,server=on,wait=off"

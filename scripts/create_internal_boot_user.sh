@@ -284,7 +284,13 @@ select_target_disk() {
     local disk_list_file=""
     local disk_path=""
     local disk_id=""
+    local name=""
+    local size=""
+    local model=""
+    local tran=""
+    local eligible=""
     local menu_args=()
+    local eligible_names=()
 
     if [[ -n "$exclude_disk" ]]; then
         exclude_path="$(disk_path_from_name "$exclude_disk")"
@@ -296,10 +302,10 @@ select_target_disk() {
     fi
 
     disk_list_file="$(mktemp)"
-    lsblk -d -n -o NAME,SIZE,MODEL,TRAN --raw | awk '{
-        name=$1; size=$2; tran=$NF;
+    lsblk -d -n -o NAME,SIZE,MODEL,TRAN,TYPE --raw | awk '$NF == "disk" {
+        name=$1; size=$2; tran=$(NF-1);
         model="";
-        for (i=3; i<NF; i++) {
+        for (i=3; i<NF-1; i++) {
             model = model (model=="" ? "" : " ") $i;
         }
         printf "%s\t%s\t%s\t%s\n", name, size, model, tran;
@@ -307,10 +313,14 @@ select_target_disk() {
 
     while IFS=$'\t' read -r name size model tran; do
         [[ -n "$name" ]] || continue
+        case "$name" in
+            loop*|ram*|zram*) continue ;;
+        esac
         model="${model//\\x20/ }"
         [[ -n "$model" ]] || model="n/a"
         [[ -n "$tran" && "$tran" != "-" ]] || tran="n/a"
         disk_path="/dev/$name"
+        [[ -b "$disk_path" ]] || continue
         if [[ -n "$ONBOARDING_BOOT_DISK" && "$disk_path" == "$ONBOARDING_BOOT_DISK" ]]; then
             continue
         fi
@@ -318,11 +328,15 @@ select_target_disk() {
             continue
         fi
         disk_id="$(resolve_disk_id "$disk_path" || true)"
+        if [[ -n "$IDENTITY_MAP_FILE" && -z "$disk_id" ]]; then
+            continue
+        fi
         [[ -n "$disk_id" ]] || disk_id="n/a"
         if [[ "$ui_backend" == "text" ]]; then
             printf "%-8s %-8s %-30s %-8s %s\n" "$name" "$size" "$model" "$tran" "$disk_id"
         fi
         menu_args+=("$name" "$size | $model | $tran | $disk_id")
+        eligible_names+=("$name")
     done < "$disk_list_file"
     rm -f "$disk_list_file"
 
@@ -335,6 +349,22 @@ select_target_disk() {
 
     selected_disk="$(normalize_disk_name "$selected")"
     selected_path="$(disk_path_from_name "$selected_disk")"
+
+    eligible=0
+    for name in "${eligible_names[@]}"; do
+        if [[ "$selected_disk" == "$name" ]]; then
+            eligible=1
+            break
+        fi
+    done
+    if [[ "$eligible" -ne 1 ]]; then
+        if [[ "$ui_backend" != "text" ]]; then
+            ui_msg "Invalid Selection" "Choose a disk from the available target list."
+        else
+            echo "Invalid selection. Choose a disk from the available target list." >&2
+        fi
+        return 1
+    fi
 
     if [[ -n "$exclude_path" && "$selected_path" == "$exclude_path" ]]; then
         if [[ "$ui_backend" != "text" ]]; then
@@ -693,6 +723,9 @@ resolve_disk_id() {
     if [[ -n "$id" ]]; then
         printf '%s\n' "$id"
         return 0
+    fi
+    if [[ -n "$IDENTITY_MAP_FILE" ]]; then
+        return 1
     fi
 
     sanitize_disk_id() {

@@ -2382,21 +2382,21 @@ echo "EFI GRUB loaded"
 set timeout=5
 
 # Prefer explicit CD partition nodes first; some BIOS paths expose ISO there.
-if [ -e (cd0,gpt1)/boot/vmlinuz ]; then
+if [ -e '(cd0,gpt1)/boot/vmlinuz' ]; then
  set root=(cd0,gpt1)
-elif [ -e (cd0,msdos1)/boot/vmlinuz ]; then
+elif [ -e '(cd0,msdos1)/boot/vmlinuz' ]; then
  set root=(cd0,msdos1)
-elif [ -e (cd0)/boot/vmlinuz ]; then
+elif [ -e '(cd0)/boot/vmlinuz' ]; then
  set root=(cd0)
 else
  search --no-floppy --label --set=root INSTALLER || search --no-floppy --label --set=root ONBOARDING || search --no-floppy --file --set=root /boot/vmlinuz || true
 fi
 if [ "\$root" = "memdisk" ] || [ "\$root" = "(memdisk)" ] || [ -z "\$root" ]; then
- if [ -e (cd0,gpt1)/boot/vmlinuz ]; then
+ if [ -e '(cd0,gpt1)/boot/vmlinuz' ]; then
   set root=(cd0,gpt1)
- elif [ -e (cd0,msdos1)/boot/vmlinuz ]; then
+ elif [ -e '(cd0,msdos1)/boot/vmlinuz' ]; then
   set root=(cd0,msdos1)
- elif [ -e (cd0)/boot/vmlinuz ]; then
+ elif [ -e '(cd0)/boot/vmlinuz' ]; then
   set root=(cd0)
  else
   set root=(cd0)
@@ -2450,21 +2450,21 @@ set timeout=5
 set timeout_style=menu
 set default=0
 
-if [ -e (cd0,gpt1)/boot/vmlinuz ]; then
+if [ -e '(cd0,gpt1)/boot/vmlinuz' ]; then
  set root=(cd0,gpt1)
-elif [ -e (cd0,msdos1)/boot/vmlinuz ]; then
+elif [ -e '(cd0,msdos1)/boot/vmlinuz' ]; then
  set root=(cd0,msdos1)
-elif [ -e (cd0)/boot/vmlinuz ]; then
+elif [ -e '(cd0)/boot/vmlinuz' ]; then
  set root=(cd0)
 else
  search --no-floppy --label --set=root INSTALLER || search --no-floppy --label --set=root ONBOARDING || search --no-floppy --file --set=root /boot/vmlinuz || true
 fi
 if [ "\$root" = "memdisk" ] || [ "\$root" = "(memdisk)" ] || [ -z "\$root" ]; then
- if [ -e (cd0,gpt1)/boot/vmlinuz ]; then
+ if [ -e '(cd0,gpt1)/boot/vmlinuz' ]; then
   set root=(cd0,gpt1)
- elif [ -e (cd0,msdos1)/boot/vmlinuz ]; then
+ elif [ -e '(cd0,msdos1)/boot/vmlinuz' ]; then
   set root=(cd0,msdos1)
- elif [ -e (cd0)/boot/vmlinuz ]; then
+ elif [ -e '(cd0)/boot/vmlinuz' ]; then
   set root=(cd0)
  else
   set root=(cd0)
@@ -2583,21 +2583,21 @@ fi
 
 menuentry "Internal Boot Setup" {
  echo "Loading installer environment..."
- if [ -e (cd0,gpt1)/boot/vmlinuz ]; then
+ if [ -e '(cd0,gpt1)/boot/vmlinuz' ]; then
   set root=(cd0,gpt1)
- elif [ -e (cd0,msdos1)/boot/vmlinuz ]; then
+ elif [ -e '(cd0,msdos1)/boot/vmlinuz' ]; then
   set root=(cd0,msdos1)
- elif [ -e (cd0)/boot/vmlinuz ]; then
+ elif [ -e '(cd0)/boot/vmlinuz' ]; then
   set root=(cd0)
  else
     search --no-floppy --label --set=root INSTALLER || search --no-floppy --label --set=root ONBOARDING || search --no-floppy --file --set=root /boot/vmlinuz || true
  fi
  if [ "\$root" = "memdisk" ] || [ "\$root" = "(memdisk)" ] || [ -z "\$root" ]; then
-   if [ -e (cd0,gpt1)/boot/vmlinuz ]; then
+   if [ -e '(cd0,gpt1)/boot/vmlinuz' ]; then
     set root=(cd0,gpt1)
-   elif [ -e (cd0,msdos1)/boot/vmlinuz ]; then
+   elif [ -e '(cd0,msdos1)/boot/vmlinuz' ]; then
     set root=(cd0,msdos1)
-   elif [ -e (cd0)/boot/vmlinuz ]; then
+   elif [ -e '(cd0)/boot/vmlinuz' ]; then
     set root=(cd0)
    else
     set root=(cd0)
