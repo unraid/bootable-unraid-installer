@@ -422,11 +422,23 @@ jobs:
           if-no-files-found: warn
 
   linux-rescue-kvm-e2e:
-    name: Linux Rescue KVM E2E
+    name: ${{ matrix.name }}
     needs: build-images
     if: ${{ needs.build-images.result == 'success' && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux Rescue KVM E2E
+            action: ci
+            state_dir: unraid-installer-rescue-e2e
+            artifact: linux-rescue-kvm-e2e
+          - name: ISO Installer Menu KVM E2E
+            action: ci-menu
+            state_dir: unraid-installer-menu-e2e
+            artifact: iso-installer-menu-kvm-e2e
     permissions:
       contents: read
 
@@ -457,6 +469,7 @@ jobs:
             netcat-openbsd \
             ovmf \
             parted \
+            python3 \
             qemu-system-x86 \
             qemu-utils \
             xorriso \
@@ -493,10 +506,10 @@ jobs:
           iso="$(find artifacts/e2e -maxdepth 1 -type f -name 'install-user.iso' -print -quit)"
           unraid_zip="$(find artifacts/e2e -maxdepth 1 -type f -name 'unRAIDServer-*-x86_64.zip' -print -quit)"
           [[ -n "$iso" && -n "$unraid_zip" ]]
-          sudo tests/linux-rescue-kvm-e2e.sh ci \
+          sudo tests/linux-rescue-kvm-e2e.sh "${{ matrix.action }}" \
             --iso "$iso" \
             --unraid-zip "$unraid_zip" \
-            --state-dir "$RUNNER_TEMP/unraid-installer-e2e" \
+            --state-dir "$RUNNER_TEMP/${{ matrix.state_dir }}" \
             --ram 4096 \
             --cpus 2
 
@@ -504,18 +517,18 @@ jobs:
         if: ${{ always() }}
         shell: bash
         run: |
-          sudo chmod a+rx "$RUNNER_TEMP/unraid-installer-e2e" 2>/dev/null || true
-          sudo find "$RUNNER_TEMP/unraid-installer-e2e" -maxdepth 1 -type f \
+          sudo chmod a+rx "$RUNNER_TEMP/${{ matrix.state_dir }}" 2>/dev/null || true
+          sudo find "$RUNNER_TEMP/${{ matrix.state_dir }}" -maxdepth 1 -type f \
             -exec chmod a+r {} + 2>/dev/null || true
 
       - name: Archive KVM E2E evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: linux-rescue-kvm-e2e-${{ github.run_number }}
+          name: ${{ matrix.artifact }}-${{ github.run_number }}
           retention-days: 3
           path: |
-            ${{ runner.temp }}/unraid-installer-e2e/serial.log
-            ${{ runner.temp }}/unraid-installer-e2e/disk-identities.tsv
-            ${{ runner.temp }}/unraid-installer-e2e/installer-command.txt
+            ${{ runner.temp }}/${{ matrix.state_dir }}/serial.log
+            ${{ runner.temp }}/${{ matrix.state_dir }}/disk-identities.tsv
+            ${{ runner.temp }}/${{ matrix.state_dir }}/installer-command.txt
           if-no-files-found: warn

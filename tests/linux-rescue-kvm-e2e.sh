@@ -21,6 +21,7 @@ VERIFY_MOUNT_DIRS=()
 CI_NBD_DISKS=()
 CI_UDEV_RULE=""
 CI_TAIL_PID=""
+CI_SERIAL_SOCKET=""
 
 usage() {
     cat <<'USAGE'
@@ -30,6 +31,7 @@ Usage:
   sudo tests/linux-rescue-kvm-e2e.sh stop [--state-dir DIR]
   sudo tests/linux-rescue-kvm-e2e.sh verify [--disk DEVICE --disk DEVICE] [--state-dir DIR]
   sudo tests/linux-rescue-kvm-e2e.sh ci --iso PATH --unraid-zip PATH [options]
+  sudo tests/linux-rescue-kvm-e2e.sh ci-menu --iso PATH --unraid-zip PATH [options]
 
 Actions:
   launch   Start the installer VM with exactly two disposable whole disks.
@@ -38,6 +40,8 @@ Actions:
            loaders, and persisted host-visible disk identities.
   ci       Create disposable sparse disks, run the install unattended, verify
            it, and clean up. This action is intended for ephemeral CI runners.
+  ci-menu  Boot the real ISO menu in KVM, drive its text prompts through the
+           serial console, verify the install, and clean up.
 
 Options:
   --iso PATH          Installer ISO to boot (required by launch)
@@ -321,6 +325,18 @@ EOF
     rm -rf "$seed_root"
 }
 
+create_ci_menu_seed() {
+    local seed_root="$STATE_DIR/ci-storage/seed-root"
+
+    SEED_IMAGE="$STATE_DIR/ci-storage/installer-menu-seed.iso"
+    mkdir -p "$seed_root/runtime" "$seed_root/zips"
+    cp "$UNRAID_ZIP" "$seed_root/zips/"
+    printf '%s\n' text > "$seed_root/runtime/menu-backend"
+    sync
+    xorriso -as mkisofs -quiet -V INSTALL-PERSIST -o "$SEED_IMAGE" "$seed_root"
+    rm -rf "$seed_root"
+}
+
 create_ci_nbd_disk() {
     local image="$1" serial="$2" nbd_disk="" nbd_name candidate
 
@@ -436,6 +452,125 @@ run_ci_test() {
     refresh_ci_nbd_disks
     ( verify_test )
     echo "GitHub-hosted Linux Rescue KVM E2E test passed."
+}
+
+write_ci_identity_map() {
+    local disk short_serial host_id
+    local identity_map="$STATE_DIR/disk-identities.tsv"
+
+    : > "$identity_map"
+    for disk in "${DISKS[@]}"; do
+        short_serial="$(udevadm info --query=property --name="$disk" | awk -F= '/^ID_SERIAL_SHORT=/{print $2; exit}')"
+        host_id="$(udevadm info --query=property --name="$disk" | awk -F= '/^ID_SERIAL=/{print $2; exit}')"
+        [[ "$short_serial" =~ ^[[:alnum:]_.-]+$ && "$host_id" =~ ^[[:alnum:]_.-]+$ ]] || {
+            echo "Unable to resolve the CI identity for $disk." >&2
+            exit 1
+        }
+        printf '%s\t%s\n' "$short_serial" "$host_id" >> "$identity_map"
+    done
+}
+
+launch_ci_menu_vm() {
+    local kernel="$STATE_DIR/ci-storage/vmlinuz"
+    local initrd="$STATE_DIR/ci-storage/initrd"
+    local monitor_socket="$STATE_DIR/monitor.sock"
+    local pid_file="$STATE_DIR/qemu.pid"
+    local identity_map="$STATE_DIR/disk-identities.tsv"
+    local command_file="$STATE_DIR/installer-command.txt"
+    local qemu_args=()
+    local index pci_address
+
+    for command in qemu-system-x86_64 python3 xorriso; do
+        require_command "$command"
+    done
+
+    xorriso -osirrox on -indev "$ISO" -extract /boot/vmlinuz "$kernel" >/dev/null 2>&1
+    xorriso -osirrox on -indev "$ISO" -extract /boot/initrd "$initrd" >/dev/null 2>&1
+    [[ -s "$kernel" && -s "$initrd" ]] || {
+        echo "Unable to extract the installer kernel and initrd from $ISO." >&2
+        exit 1
+    }
+
+    printf '%s\n' "Real ISO menu flow: C, two disks, 16 GiB boot pool, boot pool name, destructive confirmation" > "$command_file"
+    write_ci_identity_map
+    printf '%s\n' "${DISKS[@]}" > "$STATE_DIR/e2e-host-disks"
+    CI_SERIAL_SOCKET="$STATE_DIR/serial.sock"
+    rm -f "$monitor_socket" "$CI_SERIAL_SOCKET" "$pid_file" "$STATE_DIR/serial.log"
+
+    qemu_args=(
+        -name unraid-iso-installer-menu-e2e
+        -enable-kvm
+        -machine "q35,accel=kvm"
+        -cpu host
+        -m "$RAM_MIB"
+        -smp "$VCPUS"
+        -rtc base=utc
+        -kernel "$kernel"
+        -initrd "$initrd"
+        -append "root=/dev/ram0 rw rdinit=/init loglevel=3 console=ttyS0 consoleblank=0"
+        -drive "file=$ISO,media=cdrom,format=raw,readonly=on"
+        -fw_cfg "name=opt/unraid/physical-disk-map,file=$identity_map"
+        -display none
+        -monitor "unix:$monitor_socket,server=on,wait=off"
+        -serial "unix:$CI_SERIAL_SOCKET,server=on,wait=off"
+        -parallel none
+        -net none
+        -no-reboot
+        -pidfile "$pid_file"
+        -daemonize
+        -drive "file=$SEED_IMAGE,format=raw,if=none,readonly=on,id=installer-seed"
+        -device "virtio-blk-pci,drive=installer-seed,serial=UNRAID_INSTALLER_SEED,bus=pcie.0,addr=8"
+    )
+
+    for index in "${!DISKS[@]}"; do
+        pci_address=$((3 + index))
+        qemu_args+=(
+            -drive "file=${DISKS[$index]},format=raw,if=none,id=disk$index,cache=none,aio=native"
+            -device "nvme,drive=disk$index,serial=E2E_PHYSICAL_0$((index + 1)),bus=pcie.0,addr=$pci_address"
+        )
+    done
+
+    qemu-system-x86_64 "${qemu_args[@]}"
+    [[ -s "$pid_file" ]] || { echo "The ISO menu VM did not create a PID file." >&2; exit 1; }
+    kill -0 "$(cat "$pid_file")" 2>/dev/null || { echo "The ISO menu VM did not remain running." >&2; exit 1; }
+}
+
+run_ci_menu_test() {
+    local disk
+
+    [[ -n "$ISO" && -f "$ISO" ]] || { echo "ci-menu requires --iso PATH." >&2; exit 1; }
+    [[ -n "$UNRAID_ZIP" && -f "$UNRAID_ZIP" ]] || { echo "ci-menu requires --unraid-zip PATH." >&2; exit 1; }
+    [[ -c /dev/kvm ]] || { echo "/dev/kvm is unavailable on this runner." >&2; exit 1; }
+    for command in truncate qemu-nbd modprobe udevadm partx xorriso python3; do
+        require_command "$command"
+    done
+
+    mkdir -p "$STATE_DIR/ci-storage"
+    CI_UDEV_RULE="/run/udev/rules.d/99-unraid-installer-e2e-$$.rules"
+    : > "$CI_UDEV_RULE"
+    trap cleanup_ci EXIT
+
+    create_ci_menu_seed
+    modprobe nbd max_part=16
+    create_ci_nbd_disk "$STATE_DIR/ci-storage/target-1.raw" E2E_PHYSICAL_01
+    create_ci_nbd_disk "$STATE_DIR/ci-storage/target-2.raw" E2E_PHYSICAL_02
+    udevadm control --reload-rules
+    for disk in "${CI_NBD_DISKS[@]}"; do
+        udevadm trigger --action=change --sysname-match="${disk##*/}"
+    done
+    udevadm settle
+    DISKS=("${CI_NBD_DISKS[@]}")
+
+    launch_ci_menu_vm
+    python3 "$SCRIPT_DIR/iso-installer-menu-driver.py" \
+        --socket "$CI_SERIAL_SOCKET" \
+        --transcript "$STATE_DIR/serial.log" \
+        --timeout 1200
+
+    stop_test
+    refresh_ci_nbd_disks
+    ( verify_test )
+    echo "GitHub-hosted ISO installer menu KVM E2E test passed."
 }
 
 stop_test() {
@@ -637,6 +772,7 @@ case "$ACTION" in
     stop) stop_test ;;
     verify) verify_test ;;
     ci) run_ci_test ;;
+    ci-menu) run_ci_menu_test ;;
     help|--help|-h) usage ;;
     *)
         echo "Unknown action: $ACTION" >&2

@@ -301,8 +301,8 @@ select_target_disk() {
     fi
 
     if [[ "$ui_backend" == "text" ]]; then
-        echo "Available disks:"
-        printf "%-8s %-8s %-30s %-8s %s\n" "NAME" "SIZE" "MODEL" "TRAN" "ID"
+        echo "Available disks:" >&2
+        printf "%-8s %-8s %-30s %-8s %s\n" "NAME" "SIZE" "MODEL" "TRAN" "ID" >&2
     fi
 
     disk_list_file="$(mktemp)"
@@ -337,14 +337,14 @@ select_target_disk() {
         fi
         [[ -n "$disk_id" ]] || disk_id="n/a"
         if [[ "$ui_backend" == "text" ]]; then
-            printf "%-8s %-8s %-30s %-8s %s\n" "$name" "$size" "$model" "$tran" "$disk_id"
+            printf "%-8s %-8s %-30s %-8s %s\n" "$name" "$size" "$model" "$tran" "$disk_id" >&2
         fi
         menu_args+=("$name" "$size | $model | $tran | $disk_id")
         eligible_names+=("$name")
     done < "$disk_list_file"
     rm -f "$disk_list_file"
 
-    echo
+    echo >&2
     if [[ "$ui_backend" != "text" && ${#menu_args[@]} -gt 0 ]]; then
         selected="$(ui_menu_select "$title" "$prompt" "${menu_args[@]}")" || return 1
     else
