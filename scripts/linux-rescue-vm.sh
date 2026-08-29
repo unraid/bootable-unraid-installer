@@ -1,6 +1,6 @@
 #!/bin/bash
 # Start the official Unraid Installer ISO in a temporary KVM guest while
-# passing Hetzner physical disks through for an eventual bare-metal boot.
+# passing physical host disks through for an eventual bare-metal boot.
 
 set -euo pipefail
 
@@ -8,6 +8,7 @@ ISO=""
 RELEASE_TAG=""
 PUBLISHED_RELEASE_TAG=""
 RELEASE_REPOSITORY="${UNRAID_INSTALLER_RELEASE_REPOSITORY:-unraid/bootable-unraid-installer}"
+QEMU_BIN="${UNRAID_INSTALLER_QEMU_BIN:-}"
 STATE_DIR="/root/unraid-installer-vm"
 RAM_MIB="8192"
 VCPUS="4"
@@ -17,7 +18,7 @@ DISKS=()
 usage() {
     cat <<'EOF'
 Usage:
-  hetzner-rescue-vm.sh [--disk DEVICE] [--disk DEVICE] [options]
+  linux-rescue-vm.sh [--disk DEVICE] [--disk DEVICE] [options]
 
 Options:
   --disk DEVICE       Physical whole disk; repeat for a two-disk mirror
@@ -84,7 +85,7 @@ while (($#)); do
     esac
 done
 
-[[ $(id -u) -eq 0 ]] || { echo "Run this helper as root in Hetzner Rescue." >&2; exit 1; }
+[[ $(id -u) -eq 0 ]] || { echo "Run this helper as root in a Linux Rescue environment." >&2; exit 1; }
 if [[ -n "$ISO" && -n "$RELEASE_TAG" ]]; then
     echo "Use either --iso or --release-tag, not both." >&2
     exit 2
@@ -192,8 +193,24 @@ resolve_iso() {
     echo "Verified installer SHA256: $actual"
 }
 
-command -v qemu-system-x86_64 >/dev/null 2>&1 || {
-    echo "qemu-system-x86_64 is required." >&2
+find_qemu_binary() {
+    local candidate
+    if [[ -n "$QEMU_BIN" ]]; then
+        command -v "$QEMU_BIN" 2>/dev/null || return 1
+        return 0
+    fi
+    for candidate in qemu-system-x86_64 qemu-kvm; do
+        if command -v "$candidate" >/dev/null 2>&1; then
+            command -v "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+QEMU_BIN="$(find_qemu_binary || true)"
+[[ -n "$QEMU_BIN" ]] || {
+    echo "qemu-system-x86_64 or qemu-kvm is required." >&2
     exit 1
 }
 command -v udevadm >/dev/null 2>&1 || { echo "udevadm is required." >&2; exit 1; }
@@ -210,6 +227,9 @@ find_ovmf_pair() {
 /usr/share/OVMF/OVMF_CODE_4M.fd|/usr/share/OVMF/OVMF_VARS_4M.fd
 /usr/share/OVMF/OVMF_CODE.fd|/usr/share/OVMF/OVMF_VARS.fd
 /usr/share/edk2/ovmf/OVMF_CODE.fd|/usr/share/edk2/ovmf/OVMF_VARS.fd
+/usr/share/edk2/x64/OVMF_CODE.4m.fd|/usr/share/edk2/x64/OVMF_VARS.4m.fd
+/usr/share/edk2/x64/OVMF_CODE.fd|/usr/share/edk2/x64/OVMF_VARS.fd
+/usr/share/qemu/OVMF_CODE.fd|/usr/share/qemu/OVMF_VARS.fd
 EOF
     return 1
 }
@@ -434,7 +454,7 @@ for index in "${!REAL_DISKS[@]}"; do
 done
 
 QEMU_ARGS=(
-    -name unraid-hetzner-installer
+    -name unraid-linux-rescue-installer
     -enable-kvm
     -machine "q35,accel=kvm"
     -cpu host
@@ -468,7 +488,7 @@ for index in "${!REAL_DISKS[@]}"; do
     )
 done
 
-qemu-system-x86_64 "${QEMU_ARGS[@]}"
+"$QEMU_BIN" "${QEMU_ARGS[@]}"
 
 vnc_port=$((5900 + VNC_DISPLAY))
 echo "Installer VM started (PID $(cat "$PID_FILE"))."

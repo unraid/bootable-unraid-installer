@@ -152,12 +152,12 @@ jobs:
           merge-multiple: true
           path: release-assets
 
-      - name: Download Hetzner Rescue launcher from source run
+      - name: Download Linux Rescue launcher from source run
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           github-token: ${{ github.token }}
           run-id: ${{ steps.run-id.outputs.run_id }}
-          pattern: install-user-hetzner-launcher-*
+          pattern: install-user-linux-rescue-launcher-*
           merge-multiple: true
           path: release-assets
 
@@ -169,7 +169,7 @@ jobs:
           required_files=(
             release-assets/install-user.iso
             release-assets/install-user-minimal.img
-            release-assets/hetzner-rescue-vm.sh
+            release-assets/linux-rescue-vm.sh
           )
 
           for file in "${required_files[@]}"; do
@@ -188,16 +188,16 @@ jobs:
 
           iso_asset="unraid-installer-${RELEASE_VERSION}-online.iso"
           img_asset="unraid-installer-${RELEASE_VERSION}-online.img.zip"
-          launcher_asset="unraid-installer-hetzner-rescue.sh"
+          launcher_asset="unraid-installer-linux-rescue.sh"
 
           mv release-assets/install-user.iso "release-assets/${iso_asset}"
-          mv release-assets/hetzner-rescue-vm.sh "release-assets/${launcher_asset}"
+          mv release-assets/linux-rescue-vm.sh "release-assets/${launcher_asset}"
           sed -i \
             's/^PUBLISHED_RELEASE_TAG=""$/PUBLISHED_RELEASE_TAG="${{ steps.meta.outputs.release_tag }}"/' \
             "release-assets/${launcher_asset}"
           if ! grep -qx 'PUBLISHED_RELEASE_TAG="${{ steps.meta.outputs.release_tag }}"' \
             "release-assets/${launcher_asset}"; then
-            echo "Failed to pin the Hetzner launcher to the release tag." >&2
+            echo "Failed to pin the Linux Rescue launcher to the release tag." >&2
             exit 1
           fi
           chmod 0755 "release-assets/${launcher_asset}"
@@ -219,7 +219,7 @@ jobs:
           for asset in \
             release-assets/unraid-installer-*.iso \
             release-assets/unraid-installer-*.img.zip \
-            release-assets/unraid-installer-hetzner-rescue.sh; do
+            release-assets/unraid-installer-linux-rescue.sh; do
             md5sum "$asset" | awk '{print $1}' > "${asset}.md5"
             sha256sum "$asset" | awk '{print $1}' > "${asset}.sha256"
           done
@@ -241,8 +241,8 @@ jobs:
             release-assets/unraid-installer-*.img.zip
             release-assets/unraid-installer-*.iso.md5
             release-assets/unraid-installer-*.img.zip.md5
-            release-assets/unraid-installer-hetzner-rescue.sh
-            release-assets/unraid-installer-hetzner-rescue.sh.md5
+            release-assets/unraid-installer-linux-rescue.sh
+            release-assets/unraid-installer-linux-rescue.sh.md5
             release-assets/unraid-installer-*.sha256
           generate_release_notes: false
 

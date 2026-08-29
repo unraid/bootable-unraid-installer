@@ -20,13 +20,14 @@ Flash Creator does not require a display on the server while it creates the
 USB drive. Unraid Installer requires display or console access to the target
 machine because you must boot the installer and use its menu there.
 
-For Hetzner dedicated servers, use the Linux Rescue environment to host a
-temporary KVM/QEMU guest when the hardware console cannot boot the ISO
-reliably. Pass the physical disks into that guest, run the official installer,
-then shut the guest down and boot Unraid on bare metal. Follow
-[Hetzner Rescue installation](hetzner-rescue-install.md); a temporary VM needs
-the generated `fw_cfg` physical disk-ID handoff so Unraid does not retain QEMU
-device names.
+For dedicated servers whose hardware console cannot boot the ISO reliably, use
+a Linux Rescue environment to host a temporary KVM/QEMU guest. Pass the
+physical disks into that guest, run the official installer, then shut the guest
+down and boot Unraid on bare metal. Follow
+[Linux Rescue installation](linux-rescue-install.md); a temporary VM needs the
+generated `fw_cfg` physical disk-ID handoff so Unraid does not retain QEMU
+device names. Hetzner is the first validated provider; other Rescue
+environments must expose KVM and the physical disks directly.
 
 ## What Unraid Installer can do
 

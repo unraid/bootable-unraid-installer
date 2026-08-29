@@ -1,9 +1,10 @@
-# Install on Hetzner from Linux Rescue
+# Install from a Linux Rescue Environment
 
-Use this workflow when Hetzner virtual media cannot boot the Unraid Installer
-reliably. Linux Rescue remains the host while the official installer ISO runs
-inside a temporary KVM/QEMU guest. The guest writes directly to the server's
-physical disks. The completed Unraid system then boots on bare metal.
+Use this workflow when a hosting provider's virtual media cannot boot the
+Unraid Installer reliably. Linux Rescue remains the host while the official
+installer ISO runs inside a temporary KVM/QEMU guest. The guest writes directly
+to the server's physical disks. The completed Unraid system then boots on bare
+metal.
 
 Do not run the internal-install script directly in stock Rescue. Rescue does
 not provide the same `ungrub`, ZFS, and installer runtime as the official ISO.
@@ -28,15 +29,25 @@ before starting QEMU and passes the serial-to-ID mapping through QEMU
 `fw_cfg`. The installer kernel exposes that data through sysfs and the
 installer reads it automatically.
 
-## 1. Start Hetzner Linux Rescue
+## 1. Prepare the Linux Rescue host
 
-Activate Linux Rescue in Hetzner Robot with your SSH key and reboot the
-server. Confirm the Rescue SSH host key before signing in.
+Start the provider's Linux rescue or live environment with your SSH key.
+Confirm the Rescue SSH host key before signing in.
+
+This launcher is capability-based. The Rescue host must expose hardware
+virtualization through `/dev/kvm`, allow direct access to the physical target
+disks, and provide stable model and serial properties through udev. Providers
+that hide physical disks or disable KVM cannot use this workflow.
+
+For Hetzner dedicated servers, activate Linux Rescue in Hetzner Robot and
+reboot the server. Hetzner is the first validated provider for this workflow;
+other providers should be treated as compatible when they satisfy the same
+preflight checks, not as validated until tested.
 
 Install QEMU and OVMF. Use a local VNC client or noVNC to reach the guest.
 Package names vary by Rescue image. The helper needs:
 
-- `qemu-system-x86_64`;
+- `qemu-system-x86_64` or `qemu-kvm`;
 - `/dev/kvm`;
 - a matching OVMF `CODE` and `VARS` firmware pair;
 - `udevadm`, `lsblk`, and `blockdev`; and
@@ -64,9 +75,9 @@ swap, block-device holders, or membership in an imported ZFS pool.
 Download and run the launcher published with the latest installer release:
 
 ```bash
-curl -fsSL https://github.com/unraid/bootable-unraid-installer/releases/latest/download/unraid-installer-hetzner-rescue.sh \
-  -o /tmp/unraid-hetzner.sh && \
-sudo bash /tmp/unraid-hetzner.sh
+curl -fsSL https://github.com/unraid/bootable-unraid-installer/releases/latest/download/unraid-installer-linux-rescue.sh \
+  -o /tmp/unraid-installer-rescue.sh && \
+sudo bash /tmp/unraid-installer-rescue.sh
 ```
 
 The released launcher is pinned to the same release as its ISO. It downloads

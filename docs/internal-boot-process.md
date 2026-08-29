@@ -28,7 +28,7 @@ after reboot and no automatic identity handoff is available. The corresponding
 environment variables are `INTERNAL_BOOT_DISK_ID` and
 `INTERNAL_BOOT_DISK_ID_2`.
 
-The Hetzner Rescue launcher instead passes a serial-to-ID map through QEMU
+The Linux Rescue launcher instead passes a serial-to-ID map through QEMU
 `fw_cfg`. The installer kernel exposes it at
 `/sys/firmware/qemu_fw_cfg/by_name/opt/unraid/physical-disk-map/raw`, and the
 installer maps each guest disk's short serial to its host-visible ID. Explicit
@@ -86,5 +86,5 @@ Also verify:
 
 The operation log is retained at the path printed by the script. Review it
 before rebooting, especially the `mkbootable add` and mirrored EFI verification
-output. For a Hetzner Rescue VM workflow, follow
-[Hetzner Rescue installation](hetzner-rescue-install.md).
+output. For a Linux Rescue VM workflow, follow
+[Linux Rescue installation](linux-rescue-install.md).
