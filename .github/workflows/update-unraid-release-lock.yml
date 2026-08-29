@@ -108,7 +108,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -B "$branch"
           git add build/unraid-release-lock.json
-          git commit -m "chore: update Unraid OS release lock to ${LATEST_VERSION}"
+          git commit -m "fix(deps): update bundled Unraid OS to ${LATEST_VERSION}"
           git push --force-with-lease origin "$branch"
 
           body="$(mktemp)"
@@ -124,7 +124,7 @@ jobs:
             echo "- validated the releases.unraid.net stable URL and downloaded payload SHA256"
             echo "- updated build/unraid-release-lock.json"
             echo
-            echo "The workflow also dispatches Build Install Images on this branch, auto-merges this PR when that validation build succeeds, publishes both seeded and online release assets for the latest stable release, and removes bundled seeded assets from older Installer releases."
+            echo "The workflow dispatches Build Install Images on this branch and auto-merges this PR after validation. Release Please owns the subsequent installer version, tag, GitHub Release, and release-asset build."
           } > "$body"
 
           existing="$(gh pr list --head "$branch" --state open --json number --jq '.[0].number')"
@@ -141,7 +141,7 @@ jobs:
           pr_number="$(gh pr list --head "$branch" --state open --json number --jq '.[0].number')"
           echo "pr_number=$pr_number" >> "$GITHUB_OUTPUT"
 
-      - name: Validate image build, auto-merge, and publish release
+      - name: Validate image build and auto-merge
         if: steps.lock.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -161,7 +161,6 @@ jobs:
             -f publish=false
 
           run_id=""
-          run_number=""
           run_url=""
           for _ in {1..24}; do
             run_info="$(gh run list \
@@ -169,10 +168,9 @@ jobs:
               --branch "$BRANCH" \
               --event workflow_dispatch \
               --limit=1 \
-              --json=databaseId,number,url \
+              --json=databaseId,url \
               --jq='.[0] // {}')"
             run_id="$(jq -r '.databaseId // ""' <<< "$run_info")"
-            run_number="$(jq -r '.number // ""' <<< "$run_info")"
             run_url="$(jq -r '.url // ""' <<< "$run_info")"
             [[ -n "$run_id" ]] && break
             sleep 5
@@ -196,7 +194,7 @@ jobs:
             echo
             echo "Build run: ${run_url}"
             echo
-            echo "Auto-merging this release lock update, then publishing seeded and online assets to \`Installer-${LATEST_VERSION}\`."
+            echo "Auto-merging this release lock update. Release Please will include it in the next installer release."
           } > "$body"
 
           gh pr comment "$PR_NUMBER" --body-file "$body"
@@ -204,105 +202,10 @@ jobs:
           gh pr merge "$PR_NUMBER" \
             --squash \
             --delete-branch \
-            --subject "chore: update Unraid OS release lock to ${LATEST_VERSION}" \
+            --subject "fix(deps): update bundled Unraid OS to ${LATEST_VERSION}" \
             --body "Automated Unraid OS release lock update after successful installer image validation build: ${run_url}"
 
-          release_tag="Installer-${LATEST_VERSION}"
-          release_name="$release_tag"
-
-          publish_release_assets() {
-            local workflow_file="$1"
-            local label="$2"
-            local started_at
-            local publish_info
-            local publish_run_id
-            local publish_run_url
-            local conclusion
-
-            started_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-            gh workflow run "$workflow_file" \
-              --ref main \
-              -f source_run_id="$run_number" \
-              -f release_tag="$release_tag" \
-              -f release_name="$release_name" \
-              -f draft=false \
-              -f prerelease=false
-
-            publish_run_id=""
-            publish_run_url=""
-            for _ in {1..24}; do
-              publish_info="$(gh run list \
-                --workflow="$workflow_file" \
-                --branch main \
-                --event workflow_dispatch \
-                --limit=10 \
-                --json=createdAt,databaseId,url \
-                --jq='map(select(.createdAt >= "'"$started_at"'")) | .[0] // {}')"
-              publish_run_id="$(jq -r '.databaseId // ""' <<< "$publish_info")"
-              publish_run_url="$(jq -r '.url // ""' <<< "$publish_info")"
-              [[ -n "$publish_run_id" ]] && break
-              sleep 5
-            done
-
-            if [[ -z "$publish_run_id" ]]; then
-              gh pr comment "$PR_NUMBER" --body "Unable to locate dispatched ${label} publish run for \`${release_tag}\`."
-              exit 1
-            fi
-
-            gh run watch "$publish_run_id" --exit-status
-            conclusion="$(gh run view "$publish_run_id" --json conclusion --jq '.conclusion')"
-            if [[ "$conclusion" != "success" ]]; then
-              gh pr comment "$PR_NUMBER" --body "${label} publish failed for \`${release_tag}\`: ${publish_run_url}"
-              exit 1
-            fi
-
-            gh pr comment "$PR_NUMBER" --body "${label} publish succeeded for \`${release_tag}\`: ${publish_run_url}"
-          }
-
-          publish_release_assets publish-release-seeded.yml "Seeded installer release"
-          publish_release_assets publish-release.yml "Online installer release"
-
-          cleanup_stale_seeded_assets() {
-            local current_version="$1"
-            local current_tag="Installer-${current_version}"
-            local release_tags
-            local tag
-            local asset
-            local should_cleanup
-
-            release_tags="$(gh release list \
-              --limit 100 \
-              --json tagName,isDraft,isPrerelease \
-              --jq '.[] | select(.isDraft == false and .isPrerelease == false) | .tagName')"
-
-            while IFS= read -r tag; do
-              [[ "$tag" == Installer-* ]] || continue
-              [[ "$tag" != "$current_tag" ]] || continue
-
-              should_cleanup="$(python3 - "$current_version" "${tag#Installer-}" <<'PY'
-          import re
-          import sys
-
-          current = tuple(int(part) for part in sys.argv[1].split("."))
-          candidate_text = sys.argv[2]
-          if not re.fullmatch(r"\d+\.\d+\.\d+", candidate_text):
-              print("true")
-          else:
-              candidate = tuple(int(part) for part in candidate_text.split("."))
-              print("true" if candidate < current else "false")
-          PY
-          )"
-              [[ "$should_cleanup" == "true" ]] || continue
-
-              while IFS= read -r asset; do
-                case "$asset" in
-                  install-user.img.zip|install-user.img.zip.md5|unraid-installer-*-bundled.img.zip|unraid-installer-*-bundled.img.zip.md5)
-                    gh release delete-asset "$tag" "$asset" --yes
-                    gh pr comment "$PR_NUMBER" --body "Removed stale bundled seeded asset \`${asset}\` from \`${tag}\`; online installer assets remain available when present."
-                    ;;
-                esac
-              done < <(gh release view "$tag" --json assets --jq '.assets[].name')
-            done <<< "$release_tags"
-          }
-
-          cleanup_stale_seeded_assets "$LATEST_VERSION"
+          # A merge performed with GITHUB_TOKEN does not emit another push
+          # workflow. workflow_dispatch is the supported exception, so invoke
+          # the single release authority explicitly after the automated merge.
+          gh workflow run release-please.yml --ref main

@@ -49,9 +49,15 @@ payload is approved for redistribution as part of the official installer image
 because it is an alternative Unraid install method. The
 `update-unraid-release-lock.yml` workflow checks for new stable Unraid OS
 releases and opens a pull request when the pinned payload should move. After the
-latest stable seeded image is published, older or non-stable `Installer-*`
-releases keep their online installer assets when present but have bundled seeded
-IMG assets removed.
+latest stable seeded image is published, older stable `Installer-*` releases
+keep their online installer assets when present but have bundled seeded IMG
+assets removed.
+
+Release Please versions the installer independently through
+`installer-version.txt`, creates the `Installer-<version>` tag and GitHub
+Release, then invokes the image build for that exact released SHA. The publisher
+workflows only attach assets to that existing release; they never create or move
+release tags.
 
 Public release assets are renamed from the internal build artifact names to
 versioned Unraid installer download names at publish time:

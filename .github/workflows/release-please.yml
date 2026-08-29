@@ -1,0 +1,111 @@
+name: Release Please
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing Installer-* release to rebuild and republish; leave empty to run Release Please"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: release-please-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Create or resolve the installer release
+    if: ${{ github.repository == 'unraid/bootable-unraid-installer' }}
+    runs-on: ubuntu-24.04
+    outputs:
+      release_created: ${{ steps.release_please.outputs.release_created || steps.manual_release.outputs.release_created || 'false' }}
+      release_sha: ${{ steps.release_please.outputs.sha || steps.manual_release.outputs.release_sha || '' }}
+      tag_name: ${{ steps.release_please.outputs.tag_name || steps.manual_release.outputs.tag_name || '' }}
+    steps:
+      - name: Create the release pull request or GitHub Release
+        id: release_please
+        if: ${{ github.event_name == 'push' || inputs.release_tag == '' }}
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+      - name: Resolve an existing release for manual republication
+        id: manual_release
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag != '' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$RELEASE_TAG" =~ ^Installer-[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Release tag must use Installer-<SemVer>: $RELEASE_TAG" >&2
+            exit 1
+          fi
+
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null
+          release_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" --jq='.object.sha')"
+          [[ "$release_sha" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "Unable to resolve release SHA for $RELEASE_TAG" >&2
+            exit 1
+          }
+
+          {
+            echo "release_created=true"
+            echo "release_sha=$release_sha"
+            echo "tag_name=$RELEASE_TAG"
+          } >> "$GITHUB_OUTPUT"
+
+  build-release:
+    name: Build exact released source
+    needs: release
+    if: ${{ needs.release.outputs.release_created == 'true' }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build-images.yml
+    with:
+      release_ref: ${{ needs.release.outputs.release_sha }}
+      release_tag: ${{ needs.release.outputs.tag_name }}
+
+  publish-seeded:
+    name: Attach bundled installer image
+    needs:
+      - release
+      - build-release
+    if: ${{ needs.release.outputs.release_created == 'true' }}
+    permissions:
+      actions: read
+      contents: write
+    uses: ./.github/workflows/publish-release-seeded.yml
+    with:
+      release_sha: ${{ needs.release.outputs.release_sha }}
+      release_tag: ${{ needs.release.outputs.tag_name }}
+      source_run_id: ${{ github.run_id }}
+
+  publish-online:
+    name: Attach online installer and Rescue launcher
+    needs:
+      - release
+      - build-release
+      - publish-seeded
+    if: ${{ needs.release.outputs.release_created == 'true' }}
+    permissions:
+      actions: read
+      contents: write
+    uses: ./.github/workflows/publish-release.yml
+    with:
+      release_sha: ${{ needs.release.outputs.release_sha }}
+      release_tag: ${{ needs.release.outputs.tag_name }}
+      source_run_id: ${{ github.run_id }}

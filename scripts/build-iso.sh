@@ -759,9 +759,9 @@ sudo cp "$SCRIPT_DIR/create_internal_boot_user.sh" "$ONBOARDING_ASSET_DIR/create
 sudo cp "$SCRIPT_DIR/create_flash_boot.sh" "$ONBOARDING_ASSET_DIR/create_flash_boot.sh"
 sudo cp "$SCRIPT_DIR/zip.sh" "$ONBOARDING_ASSET_DIR/zip.sh"
 sudo cp "$SCRIPT_DIR/version_check.sh" "$ONBOARDING_ASSET_DIR/version_check.sh"
-installer_version="$(read_lock_json_string "version" "$(cat "$REPO_ROOT/build/unraid-release-lock.json")")"
+installer_version="$(tr -d '[:space:]' < "$REPO_ROOT/installer-version.txt")"
 if [[ ! "$installer_version" =~ ^[0-9]+(\.[0-9]+)+$ ]]; then
-  echo "Invalid installer version in build/unraid-release-lock.json: $installer_version" >&2
+  echo "Invalid installer version in installer-version.txt: $installer_version" >&2
   exit 1
 fi
 printf '%s\n' "$installer_version" | sudo tee "$ONBOARDING_ASSET_DIR/installer-version" >/dev/null

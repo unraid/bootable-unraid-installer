@@ -1,6 +1,16 @@
 name: Build Install Images
 
 on:
+  workflow_call:
+    inputs:
+      release_ref:
+        description: "Exact Release Please SHA to build"
+        required: true
+        type: string
+      release_tag:
+        description: "Exact Release Please tag to validate"
+        required: true
+        type: string
   pull_request:
     paths:
       - "build/**"
@@ -70,6 +80,7 @@ jobs:
         # git ls-remote https://github.com/actions/checkout.git refs/tags/v4
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
+          ref: ${{ inputs.release_ref || github.sha }}
           fetch-depth: 1
 
       - name: Show workflow ref and script version
@@ -83,6 +94,27 @@ jobs:
           git rev-parse HEAD
           echo "---- scripts/build-install-images.sh (first 40 lines) ----"
           sed -n '1,40p' ./scripts/build-install-images.sh
+
+      - name: Validate Release Please version metadata
+        if: ${{ inputs.release_ref != '' }}
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          release_version="${RELEASE_TAG#Installer-}"
+          manifest_version="$(jq -er '.["."]' .release-please-manifest.json)"
+          version_file="$(tr -d '[:space:]' < installer-version.txt)"
+
+          if [[ "$RELEASE_TAG" != "Installer-${release_version}" || \
+                "$manifest_version" != "$release_version" || \
+                "$version_file" != "$release_version" ]]; then
+            echo "Release version metadata is inconsistent:" >&2
+            echo "  tag=$RELEASE_TAG" >&2
+            echo "  manifest=$manifest_version" >&2
+            echo "  version_file=$version_file" >&2
+            exit 1
+          fi
 
       - name: Restore kernel and OpenZFS build cache
         id: restore-build-cache

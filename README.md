@@ -10,6 +10,7 @@ The toolchain focuses on producing bootable installer artifacts (ISO and IMG), p
 - Produces ISO and USB-ready IMG outputs.
 - Packages persistent seed content used by installer media.
 - Provides utility scripts for dependencies, kernel/ZFS cache builds, and boot media setup.
+- Uses Release Please to version the installer and publish assets built from the exact release tag.
 
 ## Repo Areas
 
