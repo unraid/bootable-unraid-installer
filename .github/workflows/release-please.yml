@@ -72,8 +72,11 @@ jobs:
     name: Build exact released source
     needs: release
     if: ${{ needs.release.outputs.release_created == 'true' }}
+    # Reusable workflows cannot elevate the caller token. build-images.yml
+    # supports an explicit manual publish mode, so its permission contract
+    # requests contents: write even though this release build does not publish.
     permissions:
-      contents: read
+      contents: write
     uses: ./.github/workflows/build-images.yml
     with:
       release_ref: ${{ needs.release.outputs.release_sha }}
