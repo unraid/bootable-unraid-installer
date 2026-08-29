@@ -439,6 +439,10 @@ jobs:
             action: ci-menu
             state_dir: unraid-installer-menu-e2e
             artifact: iso-installer-menu-kvm-e2e
+          - name: eMMC Identity KVM E2E
+            action: ci-emmc
+            state_dir: unraid-installer-emmc-e2e
+            artifact: emmc-identity-kvm-e2e
     permissions:
       contents: read
 

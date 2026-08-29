@@ -21,6 +21,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--socket", required=True, type=Path)
     parser.add_argument("--transcript", required=True, type=Path)
     parser.add_argument("--timeout", type=int, default=1200)
+    parser.add_argument(
+        "--scenario",
+        choices=("mirrored-nvme", "single-emmc"),
+        default="mirrored-nvme",
+    )
     return parser.parse_args()
 
 
@@ -44,12 +49,21 @@ def clean_output(data: str) -> str:
 def main() -> int:
     args = parse_args()
     deadline = time.monotonic() + args.timeout
+    target_steps = {
+        "mirrored-nvme": [
+            ("How many boot devices should be created?", "2\n"),
+            ("Enter target disk (example: nvme1n1):", "nvme0n1\n"),
+            ("Enter target disk (example: nvme1n1):", "nvme1n1\n"),
+        ],
+        "single-emmc": [
+            ("How many boot devices should be created?", "1\n"),
+            ("Enter target disk (example: nvme1n1):", "mmcblk0\n"),
+        ],
+    }
     steps = [
         ("Press Enter to continue...", "\n"),
         ("Enter option key:", "C\n"),
-        ("How many boot devices should be created?", "2\n"),
-        ("Enter target disk (example: nvme1n1):", "nvme0n1\n"),
-        ("Enter target disk (example: nvme1n1):", "nvme1n1\n"),
+        *target_steps[args.scenario],
         ("Enter pool name", "\n"),
         ("Type YES to continue:", "YES\n"),
         ("View full operation log now?", "\n"),

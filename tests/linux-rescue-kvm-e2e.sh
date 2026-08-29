@@ -32,6 +32,7 @@ Usage:
   sudo tests/linux-rescue-kvm-e2e.sh verify [--disk DEVICE --disk DEVICE] [--state-dir DIR]
   sudo tests/linux-rescue-kvm-e2e.sh ci --iso PATH --unraid-zip PATH [options]
   sudo tests/linux-rescue-kvm-e2e.sh ci-menu --iso PATH --unraid-zip PATH [options]
+  sudo tests/linux-rescue-kvm-e2e.sh ci-emmc --iso PATH --unraid-zip PATH [options]
 
 Actions:
   launch   Start the installer VM with exactly two disposable whole disks.
@@ -42,6 +43,8 @@ Actions:
            it, and clean up. This action is intended for ephemeral CI runners.
   ci-menu  Boot the real ISO menu in KVM, drive its text prompts through the
            serial console, verify the install, and clean up.
+  ci-emmc  Install to one emulated MMC device through the real ISO menu and
+           verify the eMMC product-plus-serial Boot Pool identity path.
 
 Options:
   --iso PATH          Installer ISO to boot (required by launch)
@@ -157,6 +160,11 @@ partition_path() {
 normalize_disks() {
     local disk normalized
     local normalized_disks=()
+    local expected_count=2
+
+    if [[ "$ACTION" == "ci-emmc" ]]; then
+        expected_count=1
+    fi
 
     for disk in "${DISKS[@]}"; do
         normalized="$(readlink -f "$disk")"
@@ -169,14 +177,14 @@ normalize_disks() {
     done
     DISKS=("${normalized_disks[@]}")
 
-    if [[ ${#DISKS[@]} -ne 2 ]]; then
-        echo "This mirrored E2E test requires exactly two --disk arguments." >&2
+    if [[ ${#DISKS[@]} -ne "$expected_count" ]]; then
+        echo "This E2E action requires exactly $expected_count test disk(s)." >&2
         exit 1
     fi
-    [[ "${DISKS[0]}" != "${DISKS[1]}" ]] || {
+    if (( expected_count == 2 )) && [[ "${DISKS[0]}" == "${DISKS[1]}" ]]; then
         echo "The two test disks must be different." >&2
         exit 1
-    }
+    fi
 }
 
 load_recorded_disks() {
@@ -471,6 +479,7 @@ write_ci_identity_map() {
 }
 
 launch_ci_menu_vm() {
+    local scenario="${1:-mirrored-nvme}"
     local kernel="$STATE_DIR/ci-storage/vmlinuz"
     local initrd="$STATE_DIR/ci-storage/initrd"
     local monitor_socket="$STATE_DIR/monitor.sock"
@@ -491,8 +500,12 @@ launch_ci_menu_vm() {
         exit 1
     }
 
-    printf '%s\n' "Real ISO menu flow: C, two disks, 16 GiB boot pool, boot pool name, destructive confirmation" > "$command_file"
-    write_ci_identity_map
+    if [[ "$scenario" == "single-emmc" ]]; then
+        printf '%s\n' "Real ISO menu flow: C, one emulated MMC disk, 16 GiB boot pool, boot pool name, destructive confirmation" > "$command_file"
+    else
+        printf '%s\n' "Real ISO menu flow: C, two NVMe disks, 16 GiB boot pool, boot pool name, destructive confirmation" > "$command_file"
+        write_ci_identity_map
+    fi
     printf '%s\n' "${DISKS[@]}" > "$STATE_DIR/e2e-host-disks"
     CI_SERIAL_SOCKET="$STATE_DIR/serial.sock"
     rm -f "$monitor_socket" "$CI_SERIAL_SOCKET" "$pid_file" "$STATE_DIR/serial.log"
@@ -509,7 +522,6 @@ launch_ci_menu_vm() {
         -initrd "$initrd"
         -append "root=/dev/ram0 rw rdinit=/init loglevel=3 console=ttyS0 consoleblank=0"
         -drive "file=$ISO,media=cdrom,format=raw,readonly=on"
-        -fw_cfg "name=opt/unraid/physical-disk-map,file=$identity_map"
         -display none
         -monitor "unix:$monitor_socket,server=on,wait=off"
         -serial "unix:$CI_SERIAL_SOCKET,server=on,wait=off"
@@ -522,13 +534,24 @@ launch_ci_menu_vm() {
         -device "virtio-blk-pci,drive=installer-seed,serial=UNRAID_INSTALLER_SEED,bus=pcie.0,addr=8"
     )
 
-    for index in "${!DISKS[@]}"; do
-        pci_address=$((3 + index))
+    if [[ "$scenario" == "single-emmc" ]]; then
         qemu_args+=(
-            -drive "file=${DISKS[$index]},format=raw,if=none,id=disk$index,cache=none,aio=native"
-            -device "nvme,drive=disk$index,serial=E2E_PHYSICAL_0$((index + 1)),bus=pcie.0,addr=$pci_address"
+            -drive "file=${DISKS[0]},format=raw,if=none,id=disk0,cache=none,aio=native"
+            -device "sdhci-pci,id=sdhci"
+            -device "sd-card,drive=disk0"
         )
-    done
+    else
+        qemu_args+=(
+            -fw_cfg "name=opt/unraid/physical-disk-map,file=$identity_map"
+        )
+        for index in "${!DISKS[@]}"; do
+            pci_address=$((3 + index))
+            qemu_args+=(
+                -drive "file=${DISKS[$index]},format=raw,if=none,id=disk$index,cache=none,aio=native"
+                -device "nvme,drive=disk$index,serial=E2E_PHYSICAL_0$((index + 1)),bus=pcie.0,addr=$pci_address"
+            )
+        done
+    fi
 
     qemu-system-x86_64 "${qemu_args[@]}"
     [[ -s "$pid_file" ]] || { echo "The ISO menu VM did not create a PID file." >&2; exit 1; }
@@ -573,6 +596,40 @@ run_ci_menu_test() {
     echo "GitHub-hosted ISO installer menu KVM E2E test passed."
 }
 
+run_ci_emmc_test() {
+    [[ -n "$ISO" && -f "$ISO" ]] || { echo "ci-emmc requires --iso PATH." >&2; exit 1; }
+    [[ -n "$UNRAID_ZIP" && -f "$UNRAID_ZIP" ]] || { echo "ci-emmc requires --unraid-zip PATH." >&2; exit 1; }
+    [[ -c /dev/kvm ]] || { echo "/dev/kvm is unavailable on this runner." >&2; exit 1; }
+    for command in truncate qemu-nbd modprobe udevadm partx xorriso python3; do
+        require_command "$command"
+    done
+
+    mkdir -p "$STATE_DIR/ci-storage"
+    CI_UDEV_RULE="/run/udev/rules.d/99-unraid-installer-e2e-$$.rules"
+    : > "$CI_UDEV_RULE"
+    trap cleanup_ci EXIT
+
+    create_ci_menu_seed
+    modprobe nbd max_part=16
+    create_ci_nbd_disk "$STATE_DIR/ci-storage/target-1.raw" E2E_EMMC_01
+    udevadm control --reload-rules
+    udevadm trigger --action=change --sysname-match="${CI_NBD_DISKS[0]##*/}"
+    udevadm settle
+    DISKS=("${CI_NBD_DISKS[0]}")
+
+    launch_ci_menu_vm single-emmc
+    python3 "$SCRIPT_DIR/iso-installer-menu-driver.py" \
+        --socket "$CI_SERIAL_SOCKET" \
+        --transcript "$STATE_DIR/serial.log" \
+        --scenario single-emmc \
+        --timeout 1200
+
+    stop_test
+    refresh_ci_nbd_disks
+    ( verify_emmc_test )
+    echo "GitHub-hosted eMMC identity KVM E2E test passed."
+}
+
 stop_test() {
     local pid_file="$STATE_DIR/qemu.pid" pid disk
 
@@ -595,7 +652,7 @@ stop_test() {
         blockdev --flushbufs "$disk"
     done
     sync
-    echo "Installer VM stopped and both test disks were flushed."
+    echo "Installer VM stopped and ${#DISKS[@]} test disk(s) were flushed."
 }
 
 cleanup_verify() {
@@ -767,12 +824,120 @@ verify_test() {
     trap - EXIT
 }
 
+verify_emmc_test() {
+    local disk part2 part3 part4 pid import_root import_output status_output
+    local boot_mount pool_cfg actual_id observed_id esp_mount
+
+    for command in readlink lsblk blockdev udevadm blkid mount umount mountpoint zpool zfs awk sed grep find head mktemp; do
+        require_command "$command"
+    done
+    load_recorded_disks
+    disk="${DISKS[0]}"
+
+    if [[ -s "$STATE_DIR/qemu.pid" ]]; then
+        pid="$(cat "$STATE_DIR/qemu.pid")"
+        if kill -0 "$pid" 2>/dev/null; then
+            echo "QEMU is still running. Stop it before verification." >&2
+            exit 1
+        fi
+    fi
+
+    blockdev --flushbufs "$disk"
+    udevadm settle
+    part2="$(partition_path "$disk" 2)"
+    part3="$(partition_path "$disk" 3)"
+    part4="$(partition_path "$disk" 4)"
+    [[ -b "$part2" && -b "$part3" && -b "$part4" ]] || {
+        echo "Expected p2, p3, and p4 on the emulated eMMC disk." >&2
+        exit 1
+    }
+    [[ "$(blkid -s TYPE -o value "$part2")" == "vfat" ]] || {
+        echo "Expected a vfat EFI partition at $part2." >&2
+        exit 1
+    }
+    [[ "$(blkid -s TYPE -o value "$part3")" == "zfs_member" ]] || {
+        echo "Expected a ZFS member at $part3." >&2
+        exit 1
+    }
+
+    VERIFY_TEMP_DIR="$(mktemp -d)"
+    import_root="$VERIFY_TEMP_DIR/import"
+    esp_mount="$VERIFY_TEMP_DIR/esp"
+    mkdir -p "$import_root" "$esp_mount"
+    trap cleanup_verify EXIT
+
+    mount -o ro "$part2" "$esp_mount"
+    VERIFY_MOUNT_DIRS+=("$esp_mount")
+    [[ -s "$esp_mount/EFI/BOOT/BOOTX64.EFI" ]] || {
+        echo "The emulated eMMC EFI loader is missing." >&2
+        exit 1
+    }
+
+    if zpool list -H -o name 2>/dev/null | grep -qx flash; then
+        echo "A pool named flash is already imported; refusing ambiguous verification." >&2
+        exit 1
+    fi
+    import_output="$(zpool import -d "$part3")"
+    grep -Eq '^[[:space:]]+pool: flash$' <<<"$import_output" || {
+        echo "The installed eMMC flash pool was not found:" >&2
+        printf '%s\n' "$import_output" >&2
+        exit 1
+    }
+
+    zpool import -N -o readonly=on -o cachefile=none -R "$import_root" -d "$part3" flash
+    VERIFY_POOL_IMPORTED=1
+    status_output="$(zpool status -P flash)"
+    if ! grep -q '^ state: ONLINE$' <<<"$status_output" ||
+        ! grep -q 'errors: No known data errors' <<<"$status_output" ||
+        ! grep -Fq "$part3" <<<"$status_output"; then
+        echo "The imported eMMC flash pool is not healthy:" >&2
+        printf '%s\n' "$status_output" >&2
+        exit 1
+    fi
+
+    zfs mount flash/boot
+    boot_mount="$(zfs get -H -o value mountpoint flash/boot)"
+    pool_cfg="$(find "$boot_mount/config/pools" -maxdepth 1 -type f -name '*.cfg' \
+        -exec grep -l '^diskId=' {} \; | head -n1)"
+    [[ -n "$pool_cfg" ]] || { echo "No eMMC boot-pool identity file found." >&2; exit 1; }
+    if grep -q '^diskId\.[0-9]' "$pool_cfg"; then
+        echo "The single-device eMMC pool contains an unexpected second identity." >&2
+        exit 1
+    fi
+
+    actual_id="$(sed -n 's/^diskId="\([^"]*\)"/\1/p' "$pool_cfg")"
+    observed_id="$(tr -d '\r' < "$STATE_DIR/serial.log" | awk '$1 == "mmcblk0" {print $NF; exit}')"
+    [[ -n "$observed_id" ]] || {
+        echo "The installer menu transcript did not contain the resolved mmcblk0 identity." >&2
+        exit 1
+    }
+    [[ "$actual_id" == "$observed_id" ]] || {
+        echo "The persisted eMMC identity differs from the identity shown by the installer." >&2
+        echo "Installer: $observed_id" >&2
+        echo "Persisted: $actual_id" >&2
+        exit 1
+    }
+    [[ "$actual_id" == *_* && "$actual_id" != 0x* ]] || {
+        echo "The persisted eMMC identity does not contain a product-name prefix: $actual_id" >&2
+        exit 1
+    }
+    printf 'mmcblk0\t%s\n' "$actual_id" > "$STATE_DIR/disk-identities.tsv"
+
+    echo "eMMC identity KVM E2E verification passed."
+    echo "Persisted eMMC ID: $actual_id"
+    echo "Partition layout:"
+    lsblk -o NAME,PATH,SIZE,TYPE,FSTYPE,PARTLABEL,MODEL,SERIAL "$disk"
+    cleanup_verify
+    trap - EXIT
+}
+
 case "$ACTION" in
     launch) launch_test ;;
     stop) stop_test ;;
     verify) verify_test ;;
     ci) run_ci_test ;;
     ci-menu) run_ci_menu_test ;;
+    ci-emmc) run_ci_emmc_test ;;
     help|--help|-h) usage ;;
     *)
         echo "Unknown action: $ACTION" >&2
