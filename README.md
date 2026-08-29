@@ -29,6 +29,12 @@ Start here, then use the detailed guides below:
    - High-level build-chain scope, outputs, and script responsibilities.
 3. `docs/USER_COMMANDS.md`
    - Command reference, build modes, common options, and troubleshooting.
+4. `docs/hetzner-rescue-install.md`
+   - Hetzner Rescue and temporary-QEMU workflow for installing to physical
+     disks without persisting virtual disk identities.
+
+The Rescue-side entry point for that workflow is
+`scripts/hetzner-rescue-vm.sh`.
 
 ## Typical Build Entry Point
 

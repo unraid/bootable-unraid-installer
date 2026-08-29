@@ -204,6 +204,18 @@ two-disk mirrored ZFS boot pool. See [Internal boot creation process](internal-b
 for the phases, safety checks, and the EFI verification required for mirrored
 setups.
 
+Direct invocation supports `--disk-id ID` and `--disk-id-2 ID` (or
+`INTERNAL_BOOT_DISK_ID` and `INTERNAL_BOOT_DISK_ID_2`) when installation runs
+inside a temporary VM but the completed system will boot on the physical host.
+The override for each position must match the corresponding target disk
+argument. See [Hetzner Rescue installation](hetzner-rescue-install.md).
+
+`hetzner-rescue-vm.sh` runs on the Hetzner Linux Rescue host. It records the
+physical disk identities, passes them through QEMU `fw_cfg`, and starts the
+official installer ISO in a localhost-only VNC guest. The installer consumes
+the handoff automatically; the generated command with explicit overrides is
+a fallback.
+
 ### Restore Existing Internal Boot
 
 Recovery’s **Restore Existing Internal Boot** replaces files in the current

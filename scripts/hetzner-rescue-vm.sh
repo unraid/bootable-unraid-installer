@@ -1,0 +1,261 @@
+#!/bin/bash
+# Start the official Unraid Installer ISO in a temporary KVM guest while
+# passing Hetzner physical disks through for an eventual bare-metal boot.
+
+set -euo pipefail
+
+ISO=""
+STATE_DIR="/root/unraid-installer-vm"
+RAM_MIB="8192"
+VCPUS="4"
+VNC_DISPLAY="1"
+DISKS=()
+
+usage() {
+    cat <<'EOF'
+Usage:
+  hetzner-rescue-vm.sh --iso PATH --disk DEVICE [--disk DEVICE] [options]
+
+Required:
+  --iso PATH          Official Unraid Installer ISO
+  --disk DEVICE       Physical whole disk; repeat for a two-disk mirror
+
+Options:
+  --state-dir PATH    VM state directory (default: /root/unraid-installer-vm)
+  --ram MIB           Guest memory in MiB (default: 8192)
+  --cpus COUNT        Guest vCPU count (default: 4)
+  --vnc-display N     Localhost VNC display (default: 1, TCP port 5901)
+  --help              Show this help
+
+This helper only boots the installer. Power the VM off after installation;
+do not boot the installed Unraid OS inside this temporary guest.
+EOF
+}
+
+while (($#)); do
+    case "$1" in
+        --iso)
+            [[ $# -ge 2 ]] || { echo "Missing value for --iso" >&2; exit 2; }
+            ISO="$2"
+            shift 2
+            ;;
+        --disk)
+            [[ $# -ge 2 ]] || { echo "Missing value for --disk" >&2; exit 2; }
+            DISKS+=("$2")
+            shift 2
+            ;;
+        --state-dir)
+            [[ $# -ge 2 ]] || { echo "Missing value for --state-dir" >&2; exit 2; }
+            STATE_DIR="$2"
+            shift 2
+            ;;
+        --ram)
+            [[ $# -ge 2 ]] || { echo "Missing value for --ram" >&2; exit 2; }
+            RAM_MIB="$2"
+            shift 2
+            ;;
+        --cpus)
+            [[ $# -ge 2 ]] || { echo "Missing value for --cpus" >&2; exit 2; }
+            VCPUS="$2"
+            shift 2
+            ;;
+        --vnc-display)
+            [[ $# -ge 2 ]] || { echo "Missing value for --vnc-display" >&2; exit 2; }
+            VNC_DISPLAY="$2"
+            shift 2
+            ;;
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Unknown argument: $1" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
+done
+
+[[ $(id -u) -eq 0 ]] || { echo "Run this helper as root in Hetzner Rescue." >&2; exit 1; }
+[[ -f "$ISO" && -r "$ISO" ]] || { echo "Installer ISO is not readable: $ISO" >&2; exit 1; }
+[[ ${#DISKS[@]} -ge 1 && ${#DISKS[@]} -le 2 ]] || {
+    echo "Provide one or two --disk arguments." >&2
+    exit 1
+}
+if [[ ! "$RAM_MIB" =~ ^[0-9]+$ ]] || (( RAM_MIB < 2048 )); then
+    echo "--ram must be an integer of at least 2048 MiB." >&2
+    exit 1
+fi
+if [[ ! "$VCPUS" =~ ^[0-9]+$ ]] || (( VCPUS < 1 )); then
+    echo "--cpus must be a positive integer." >&2
+    exit 1
+fi
+[[ "$VNC_DISPLAY" =~ ^[0-9]+$ ]] || {
+    echo "--vnc-display must be a non-negative integer." >&2
+    exit 1
+}
+
+command -v qemu-system-x86_64 >/dev/null 2>&1 || {
+    echo "qemu-system-x86_64 is required." >&2
+    exit 1
+}
+command -v udevadm >/dev/null 2>&1 || { echo "udevadm is required." >&2; exit 1; }
+[[ -c /dev/kvm ]] || { echo "/dev/kvm is unavailable; enable virtualization support first." >&2; exit 1; }
+
+find_ovmf_pair() {
+    local code vars
+    while IFS='|' read -r code vars; do
+        if [[ -r "$code" && -r "$vars" ]]; then
+            printf '%s|%s\n' "$code" "$vars"
+            return 0
+        fi
+    done <<'EOF'
+/usr/share/OVMF/OVMF_CODE_4M.fd|/usr/share/OVMF/OVMF_VARS_4M.fd
+/usr/share/OVMF/OVMF_CODE.fd|/usr/share/OVMF/OVMF_VARS.fd
+/usr/share/edk2/ovmf/OVMF_CODE.fd|/usr/share/edk2/ovmf/OVMF_VARS.fd
+EOF
+    return 1
+}
+
+sanitize_id() {
+    printf '%s\n' "$1" | sed -E 's/[[:space:]]+/_/g; s/[^[:alnum:]_.-]/_/g; s/^_+//; s/_+$//'
+}
+
+host_disk_id() {
+    local disk="$1" model serial id
+    model="$(udevadm info --query=property --name="$disk" | awk -F= '/^ID_MODEL=/{print $2; exit}')"
+    serial="$(udevadm info --query=property --name="$disk" | awk -F= '/^ID_SERIAL_SHORT=/{print $2; exit}')"
+    id="$(sanitize_id "${model}_${serial}")"
+    [[ -n "$model" && -n "$serial" && -n "$id" ]] || return 1
+    printf '%s\n' "$id"
+}
+
+short_serial() {
+    udevadm info --query=property --name="$1" | awk -F= '/^ID_SERIAL_SHORT=/{print $2; exit}'
+}
+
+ovmf_pair="$(find_ovmf_pair || true)"
+[[ -n "$ovmf_pair" ]] || {
+    echo "Could not find a matching OVMF CODE/VARS pair." >&2
+    exit 1
+}
+OVMF_CODE="${ovmf_pair%%|*}"
+OVMF_VARS_TEMPLATE="${ovmf_pair#*|}"
+
+REAL_DISKS=()
+HOST_IDS=()
+SHORT_SERIALS=()
+for disk in "${DISKS[@]}"; do
+    disk_serial=""
+    disk="$(readlink -f "$disk")"
+    [[ -b "$disk" ]] || { echo "Not a block device: $disk" >&2; exit 1; }
+    [[ "$(lsblk -dn -o TYPE "$disk")" == "disk" ]] || {
+        echo "Pass a whole disk, not a partition: $disk" >&2
+        exit 1
+    }
+    if lsblk -nrpo MOUNTPOINTS "$disk" | grep -qv '^$'; then
+        echo "A target disk or partition is mounted: $disk" >&2
+        exit 1
+    fi
+    disk_serial="$(short_serial "$disk")"
+    if [[ ! "$disk_serial" =~ ^[[:alnum:]_.-]+$ ]]; then
+        echo "Unsupported disk serial for QEMU handoff: $disk_serial" >&2
+        exit 1
+    fi
+    REAL_DISKS+=("$disk")
+    HOST_IDS+=("$(host_disk_id "$disk")")
+    SHORT_SERIALS+=("$disk_serial")
+done
+
+if [[ ${#REAL_DISKS[@]} -eq 2 && "${REAL_DISKS[0]}" == "${REAL_DISKS[1]}" ]]; then
+    echo "The two target disks must be different." >&2
+    exit 1
+fi
+if [[ ${#HOST_IDS[@]} -eq 2 && "${HOST_IDS[0]}" == "${HOST_IDS[1]}" ]]; then
+    echo "The two target disks resolved to the same persistent ID." >&2
+    exit 1
+fi
+
+mkdir -p "$STATE_DIR"
+PID_FILE="$STATE_DIR/qemu.pid"
+if [[ -s "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+    echo "A VM recorded in $PID_FILE is already running." >&2
+    exit 1
+fi
+
+OVMF_VARS="$STATE_DIR/OVMF_VARS.fd"
+MONITOR_SOCKET="$STATE_DIR/monitor.sock"
+SERIAL_LOG="$STATE_DIR/serial.log"
+COMMAND_FILE="$STATE_DIR/installer-command.txt"
+IDENTITY_MAP="$STATE_DIR/disk-identities.tsv"
+rm -f "$MONITOR_SOCKET" "$SERIAL_LOG" "$PID_FILE"
+cp "$OVMF_VARS_TEMPLATE" "$OVMF_VARS"
+
+for disk in "${REAL_DISKS[@]}"; do
+    blockdev --flushbufs "$disk"
+done
+
+{
+    printf '/bin/bash /boot/install/create_internal_boot.sh --ui gui --size 16384'
+    printf ' --disk-id %q' "${HOST_IDS[0]}"
+    if [[ ${#HOST_IDS[@]} -eq 2 ]]; then
+        printf ' --disk-id-2 %q' "${HOST_IDS[1]}"
+    fi
+    for index in "${!REAL_DISKS[@]}"; do
+        printf ' /dev/nvme%sn1' "$index"
+    done
+    printf '\n'
+} > "$COMMAND_FILE"
+
+: > "$IDENTITY_MAP"
+for index in "${!REAL_DISKS[@]}"; do
+    printf '%s\t%s\n' "${SHORT_SERIALS[$index]}" "${HOST_IDS[$index]}" >> "$IDENTITY_MAP"
+done
+
+QEMU_ARGS=(
+    -name unraid-hetzner-installer
+    -enable-kvm
+    -machine "q35,accel=kvm"
+    -cpu host
+    -m "$RAM_MIB"
+    -smp "$VCPUS"
+    -rtc "base=utc"
+    -drive "if=pflash,format=raw,readonly=on,file=$OVMF_CODE"
+    -drive "if=pflash,format=raw,file=$OVMF_VARS"
+    -drive "file=$ISO,media=cdrom,format=raw,readonly=on"
+    -boot "once=d,menu=on"
+    -netdev "user,id=net0"
+    -device "e1000,netdev=net0"
+    -fw_cfg "name=opt/unraid/physical-disk-map,file=$IDENTITY_MAP"
+    -display none
+    -vnc "127.0.0.1:$VNC_DISPLAY"
+    -monitor "unix:$MONITOR_SOCKET,server=on,wait=off"
+    -serial "file:$SERIAL_LOG"
+    -parallel none
+    -pidfile "$PID_FILE"
+    -daemonize
+)
+
+for index in "${!REAL_DISKS[@]}"; do
+    pci_address=$((3 + index))
+    QEMU_ARGS+=(
+        -drive "file=${REAL_DISKS[$index]},format=raw,if=none,id=disk$index,cache=none,aio=native"
+        -device "nvme,drive=disk$index,serial=${SHORT_SERIALS[$index]},bus=pcie.0,addr=$pci_address"
+    )
+done
+
+qemu-system-x86_64 "${QEMU_ARGS[@]}"
+
+vnc_port=$((5900 + VNC_DISPLAY))
+echo "Installer VM started (PID $(cat "$PID_FILE"))."
+echo "VNC listens only on Rescue localhost port $vnc_port."
+echo "Forward it from your computer with:"
+echo "  ssh -L ${vnc_port}:127.0.0.1:${vnc_port} root@<server-ip>"
+echo ""
+echo "Inside the installer, open Shell, verify guest serials with:"
+echo "  lsblk -d -o NAME,SIZE,MODEL,SERIAL"
+echo "The installer will read physical IDs automatically from QEMU fw_cfg."
+echo "If automatic discovery fails, run the fallback command saved at: $COMMAND_FILE"
+cat "$COMMAND_FILE"
+echo ""
+echo "Power off the VM after installation. Do not boot installed Unraid in this VM."

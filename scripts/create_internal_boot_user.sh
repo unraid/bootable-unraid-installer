@@ -12,6 +12,10 @@
 #            If omitted, the script prompts interactively for disk selection.
 #   --size SIZE_MIB (optional), for example: 16384
 #       Boot pool target size in MiB; use 0 for dedicated boot pool (default: 16384).
+#   --disk-id ID / --disk-id-2 ID (optional)
+#       Persist these host-visible disk IDs instead of the IDs exposed by the
+#       running environment. Use this when physical disks are passed through
+#       to a temporary VM that will later boot Unraid on bare metal.
 #
 # Copyright (c) 2026, Lime Technology, Inc. (Limetech)
 # -----------------------------------------------------------------------------
@@ -28,6 +32,9 @@ TARGET_DISK_ARG_1=""
 TARGET_DISK_ARG_2=""
 TARGET_DISK=""
 TARGET_DISK_2=""
+DISK_ID_OVERRIDE="${INTERNAL_BOOT_DISK_ID:-}"
+DISK_ID_OVERRIDE_2="${INTERNAL_BOOT_DISK_ID_2:-}"
+IDENTITY_MAP_FILE=""
 SIZE="${INTERNAL_BOOT_SIZE_MIB:-16384}"
 DEFAULT_BOOT_SIZE_MIB=16384
 MIN_DATA_PART_MIB=1
@@ -51,6 +58,16 @@ while (($#)); do
         --restore-backup)
             [[ $# -ge 2 ]] || { echo "Missing value for --restore-backup" >&2; exit 1; }
             RESTORE_BACKUP="$2"
+            shift 2
+            ;;
+        --disk-id)
+            [[ $# -ge 2 ]] || { echo "Missing value for --disk-id" >&2; exit 1; }
+            DISK_ID_OVERRIDE="$2"
+            shift 2
+            ;;
+        --disk-id-2)
+            [[ $# -ge 2 ]] || { echo "Missing value for --disk-id-2" >&2; exit 1; }
+            DISK_ID_OVERRIDE_2="$2"
             shift 2
             ;;
         *)
@@ -83,6 +100,18 @@ if (( SIZE != 0 && SIZE < 1024 )); then
 fi
 if (( SIZE == 0 )); then
     REQUESTED_DEDICATED_SIZE=1
+fi
+
+for disk_id_override in "$DISK_ID_OVERRIDE" "$DISK_ID_OVERRIDE_2"; do
+    [[ -n "$disk_id_override" ]] || continue
+    if [[ ! "$disk_id_override" =~ ^[[:alnum:]_.-]+$ ]]; then
+        echo "Disk ID overrides may contain only letters, numbers, '.', '_', and '-'." >&2
+        exit 1
+    fi
+done
+if [[ -n "$DISK_ID_OVERRIDE" && "$DISK_ID_OVERRIDE" == "$DISK_ID_OVERRIDE_2" ]]; then
+    echo "First and second disk ID overrides must be different." >&2
+    exit 1
 fi
 
 normalize_disk_name() {
@@ -211,7 +240,7 @@ ui_menu_select() {
 prompt_boot_device_count() {
     local choice=""
 
-    if [[ -n "$TARGET_DISK_ARG_2" ]]; then
+    if [[ -n "$TARGET_DISK_ARG_2" || -n "$DISK_ID_OVERRIDE_2" ]]; then
         BOOT_DEVICE_COUNT=2
         return 0
     fi
@@ -253,6 +282,8 @@ select_target_disk() {
     local selected_disk=""
     local selected_path=""
     local disk_list_file=""
+    local disk_path=""
+    local disk_id=""
     local menu_args=()
 
     if [[ -n "$exclude_disk" ]]; then
@@ -579,6 +610,77 @@ prompt_size_for_small_disk() {
     done
 }
 
+load_identity_map() {
+    local source="$1"
+    local output=""
+    local serial=""
+    local host_id=""
+    local extra=""
+    local rows=0
+    local invalid_map=0
+    local map_size=0
+
+    output="$(mktemp)"
+    if ! cat "$source" > "$output" 2>>"$RUN_LOG_FILE"; then
+        rm -f "$output"
+        return 1
+    fi
+    map_size="$(wc -c < "$output" | xargs)"
+    if [[ ! "$map_size" =~ ^[0-9]+$ ]] || (( map_size < 1 || map_size > 4096 )); then
+        rm -f "$output"
+        return 1
+    fi
+
+    while IFS=$'\t' read -r serial host_id extra; do
+        [[ -n "$serial" ]] || continue
+        if [[ -n "$extra" || ! "$serial" =~ ^[[:alnum:]_.-]+$ || ! "$host_id" =~ ^[[:alnum:]_.-]+$ ]]; then
+            invalid_map=1
+            break
+        fi
+        rows=$((rows + 1))
+    done < "$output"
+    if (( invalid_map == 1 )); then
+        rm -f "$output"
+        return 1
+    fi
+    if (( rows < 1 || rows > 2 )); then
+        rm -f "$output"
+        return 1
+    fi
+    if awk -F '\t' '
+        {serials[$1]++; ids[$2]++}
+        END {
+            for (key in serials) if (serials[key] > 1) exit 0
+            for (key in ids) if (ids[key] > 1) exit 0
+            exit 1
+        }
+    ' "$output"; then
+        rm -f "$output"
+        return 1
+    fi
+
+    printf '%s\n' "$output"
+}
+
+resolve_identity_map_id() {
+    local disk="$1"
+    local serial=""
+    local mapped_id=""
+
+    [[ -n "$IDENTITY_MAP_FILE" && -f "$IDENTITY_MAP_FILE" ]] || return 1
+    if command -v udevadm >/dev/null 2>&1; then
+        serial="$(udevadm info --query=property --name "$disk" 2>/dev/null | awk -F= '/^ID_SERIAL_SHORT=/{print $2; exit}')"
+    fi
+    if [[ -z "$serial" ]]; then
+        serial="$(lsblk -dn -o SERIAL "$disk" 2>/dev/null | xargs || true)"
+    fi
+    [[ -n "$serial" ]] || return 1
+
+    mapped_id="$(awk -F '\t' -v serial="$serial" '$1 == serial {print $2; exit}' "$IDENTITY_MAP_FILE")"
+    [[ -n "$mapped_id" ]] || return 1
+    printf '%s\n' "$mapped_id"
+}
+
 resolve_disk_id() {
     local disk="$1"
     local id=""
@@ -586,6 +688,12 @@ resolve_disk_id() {
     local transport=""
     local model=""
     local short_serial=""
+
+    id="$(resolve_identity_map_id "$disk" || true)"
+    if [[ -n "$id" ]]; then
+        printf '%s\n' "$id"
+        return 0
+    fi
 
     sanitize_disk_id() {
         local raw="$1"
@@ -656,6 +764,116 @@ resolve_disk_id() {
     fi
 
     return 1
+}
+
+resolve_selected_disk_ids() {
+    DISK_ID="$DISK_ID_OVERRIDE"
+    if [[ -n "$DISK_ID" ]]; then
+        log_msg "Using supplied host disk ID for $TARGET: $DISK_ID"
+    else
+        DISK_ID="$(resolve_disk_id "$TARGET" || true)"
+    fi
+    if [[ -z "$DISK_ID" && -n "$IDENTITY_MAP_FILE" ]]; then
+        error_msg "ERROR: $TARGET does not match any serial in the QEMU physical-disk identity handoff."
+        return 1
+    fi
+    if [[ -z "$DISK_ID" ]]; then
+        DISK_ID="$TARGET_DISK"
+        log_msg "WARNING: could not resolve stable disk ID for $TARGET; using '$DISK_ID'."
+    fi
+    log_msg "Using DISK_ID: $DISK_ID"
+
+    if (( BOOT_DEVICE_COUNT == 2 )); then
+        DISK_ID_2="$DISK_ID_OVERRIDE_2"
+        if [[ -n "$DISK_ID_2" ]]; then
+            log_msg "Using supplied host disk ID for $TARGET_2: $DISK_ID_2"
+        else
+            DISK_ID_2="$(resolve_disk_id "$TARGET_2" || true)"
+        fi
+        if [[ -z "$DISK_ID_2" && -n "$IDENTITY_MAP_FILE" ]]; then
+            error_msg "ERROR: $TARGET_2 does not match any serial in the QEMU physical-disk identity handoff."
+            return 1
+        fi
+        if [[ -z "$DISK_ID_2" ]]; then
+            DISK_ID_2="$TARGET_DISK_2"
+            log_msg "WARNING: could not resolve stable disk ID for $TARGET_2; using '$DISK_ID_2'."
+        fi
+        if [[ "$DISK_ID_2" == "$DISK_ID" ]]; then
+            error_msg "ERROR: first and second boot devices must have different persistent disk IDs."
+            return 1
+        fi
+        log_msg "Using DISK_ID.1: $DISK_ID_2"
+    fi
+
+    if [[ -z "$DISK_ID_OVERRIDE" && "$DISK_ID" == QEMU_* ]]; then
+        log_msg "WARNING: persisting a QEMU disk ID. If this installation will boot on bare metal, rerun with --disk-id set to the host-visible ID."
+    fi
+    if (( BOOT_DEVICE_COUNT == 2 )) && [[ -z "$DISK_ID_OVERRIDE_2" && "$DISK_ID_2" == QEMU_* ]]; then
+        log_msg "WARNING: persisting a QEMU disk ID for the second device. If this installation will boot on bare metal, rerun with --disk-id-2 set to the host-visible ID."
+    fi
+}
+
+sync_mirrored_efi_core() {
+    local first_esp="$1"
+    local second_esp="$2"
+    local temp_dir=""
+    local first_core=""
+    local second_core=""
+    local reread_core=""
+
+    command -v mcopy >/dev/null 2>&1 || {
+        error_msg "ERROR: mcopy is required to verify mirrored EFI loaders."
+        return 1
+    }
+
+    if findmnt -rn -S "$first_esp" >/dev/null 2>&1 || findmnt -rn -S "$second_esp" >/dev/null 2>&1; then
+        error_msg "ERROR: EFI partitions must be unmounted before mirrored loader verification."
+        return 1
+    fi
+
+    temp_dir="$(mktemp -d)"
+    first_core="$temp_dir/first-BOOTX64.EFI"
+    second_core="$temp_dir/second-BOOTX64.EFI"
+    reread_core="$temp_dir/reread-BOOTX64.EFI"
+
+    if ! mcopy -i "$first_esp" ::/EFI/BOOT/BOOTX64.EFI "$first_core" >>"$RUN_LOG_FILE" 2>&1; then
+        rm -rf "$temp_dir"
+        error_msg "ERROR: unable to read EFI loader from $first_esp."
+        return 1
+    fi
+    if ! mcopy -i "$second_esp" ::/EFI/BOOT/BOOTX64.EFI "$second_core" >>"$RUN_LOG_FILE" 2>&1; then
+        rm -rf "$temp_dir"
+        error_msg "ERROR: unable to read EFI loader from $second_esp."
+        return 1
+    fi
+
+    if cmp -s "$first_core" "$second_core"; then
+        log_msg "Mirrored EFI loaders are already identical."
+        rm -rf "$temp_dir"
+        return 0
+    fi
+
+    log_msg "WARNING: mirrored EFI loaders differ; copying the loader produced by the second mkbootable add to the first ESP."
+    if ! mcopy -o -i "$first_esp" "$second_core" ::/EFI/BOOT/BOOTX64.EFI >>"$RUN_LOG_FILE" 2>&1; then
+        rm -rf "$temp_dir"
+        error_msg "ERROR: unable to synchronize EFI loader to $first_esp."
+        return 1
+    fi
+    sync
+
+    if ! mcopy -i "$first_esp" ::/EFI/BOOT/BOOTX64.EFI "$reread_core" >>"$RUN_LOG_FILE" 2>&1; then
+        rm -rf "$temp_dir"
+        error_msg "ERROR: unable to re-read synchronized EFI loader from $first_esp."
+        return 1
+    fi
+    if ! cmp -s "$reread_core" "$second_core"; then
+        rm -rf "$temp_dir"
+        error_msg "ERROR: mirrored EFI loader verification failed after synchronization."
+        return 1
+    fi
+
+    log_msg "Mirrored EFI loaders synchronized and verified."
+    rm -rf "$temp_dir"
 }
 
 detect_onboarding_boot_disk() {
@@ -730,6 +948,16 @@ ensure_zfs_runtime() {
 detect_ui_backend
 init_run_log
 trap show_failure_log_on_exit EXIT
+
+identity_map_source="${INTERNAL_BOOT_IDENTITY_MAP_FILE:-/sys/firmware/qemu_fw_cfg/by_name/opt/unraid/physical-disk-map/raw}"
+if [[ -r "$identity_map_source" ]]; then
+    IDENTITY_MAP_FILE="$(load_identity_map "$identity_map_source" || true)"
+    if [[ -z "$IDENTITY_MAP_FILE" ]]; then
+        error_msg "ERROR: the QEMU physical-disk identity handoff is invalid or unreadable."
+        exit 1
+    fi
+    log_msg "Loaded bare-metal disk identity handoff from QEMU fw_cfg."
+fi
 
 ZIP_ROOT="${PERSISTENT_ROOT:-/mnt/persist}"
 ZIP_DIR="${PERSISTENT_ZIP_DIR:-${ZIP_ROOT}/zips}"
@@ -817,6 +1045,15 @@ ONBOARDING_BOOT_DISK="$(detect_onboarding_boot_disk || true)"
 # Safety checks
 # -------------------------------
 while ! prompt_boot_device_count; do :; done
+if (( BOOT_DEVICE_COUNT == 2 )); then
+    TOTAL_STEPS=10
+fi
+
+if (( BOOT_DEVICE_COUNT == 2 )) && [[ -n "${DISK_ID_OVERRIDE}${DISK_ID_OVERRIDE_2}" ]] && \
+    { [[ -z "$DISK_ID_OVERRIDE" ]] || [[ -z "$DISK_ID_OVERRIDE_2" ]]; }; then
+    error_msg "ERROR: provide both --disk-id and --disk-id-2 for a mirrored override."
+    exit 1
+fi
 
 if [[ -n "$TARGET_DISK_ARG_1" ]]; then
     if [[ -b "$(disk_path_from_name "$TARGET_DISK_ARG_1")" ]]; then
@@ -892,8 +1129,10 @@ TARGET_DISK="$(normalize_disk_name "$TARGET_DISK")"
 TARGET_DISK_2="$(normalize_disk_name "$TARGET_DISK_2")"
 
 TARGET="/dev/$TARGET_DISK"
+TARGET_PART2="${TARGET}2"
 TARGET_PART3="${TARGET}3"
 if [[ "$TARGET_DISK" =~ [0-9]$ ]]; then
+    TARGET_PART2="${TARGET}p2"
     TARGET_PART3="${TARGET}p3"
 fi
 
@@ -904,8 +1143,10 @@ fi
 
 if (( BOOT_DEVICE_COUNT == 2 )); then
     TARGET_2="/dev/$TARGET_DISK_2"
+    TARGET_2_PART2="${TARGET_2}2"
     TARGET_2_PART3="${TARGET_2}3"
     if [[ "$TARGET_DISK_2" =~ [0-9]$ ]]; then
+        TARGET_2_PART2="${TARGET_2}p2"
         TARGET_2_PART3="${TARGET_2}p3"
     fi
 
@@ -970,6 +1211,9 @@ if (( BOOT_DEVICE_COUNT == 2 )) && [[ "$ROOT_SRC" == *"$TARGET_DISK_2"* ]]; then
     exit 1
 fi
 
+# Resolve and validate persistent identities before the destructive prompt.
+resolve_selected_disk_ids || exit 1
+
 if [[ "$ui_backend" != "text" ]]; then
     if (( BOOT_DEVICE_COUNT == 2 )); then
         confirm_text="ALL DATA on $TARGET and $TARGET_2 will be destroyed. Continue?"
@@ -1009,23 +1253,11 @@ fi
 
 step_update "Creating bootable target partitions"
 run_operation mkdir -p "/boot-transfer"
-DISK_ID="$(resolve_disk_id "$TARGET" || true)"
-if [[ -z "$DISK_ID" ]]; then
-    DISK_ID="$TARGET_DISK"
-    log_msg "WARNING: could not resolve stable disk ID for $TARGET; using '$DISK_ID'."
-fi
-log_msg "Using DISK_ID: $DISK_ID"
-if (( BOOT_DEVICE_COUNT == 2 )); then
-    DISK_ID_2="$(resolve_disk_id "$TARGET_2" || true)"
-    if [[ -z "$DISK_ID_2" ]]; then
-        DISK_ID_2="$TARGET_DISK_2"
-        log_msg "WARNING: could not resolve stable disk ID for $TARGET_2; using '$DISK_ID_2'."
-    fi
-    log_msg "Using DISK_ID.1: $DISK_ID_2"
-fi
 if (( BOOT_DEVICE_COUNT == 2 )); then
     run_operation /usr/local/ungrub/mkbootable add "$TARGET_DISK" "$SIZE"
     run_operation /usr/local/ungrub/mkbootable add "$TARGET_DISK_2" "$SIZE"
+    step_update "Synchronizing mirrored EFI loaders"
+    sync_mirrored_efi_core "$TARGET_PART2" "$TARGET_2_PART2" || exit 1
 else
     run_operation /usr/local/ungrub/mkbootable add "$TARGET_DISK" "$SIZE"
 fi
