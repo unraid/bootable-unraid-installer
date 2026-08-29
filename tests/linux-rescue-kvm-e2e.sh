@@ -275,6 +275,9 @@ cleanup_ci() {
         umount "$STATE_DIR/seed-mount" 2>/dev/null || true
     fi
     rm -rf "$STATE_DIR/ci-storage" "$STATE_DIR/seed-mount"
+    chmod a+rx "$STATE_DIR" 2>/dev/null || true
+    chmod a+r "$STATE_DIR/serial.log" "$STATE_DIR/disk-identities.tsv" \
+        "$STATE_DIR/installer-command.txt" 2>/dev/null || true
 }
 
 create_ci_seed() {

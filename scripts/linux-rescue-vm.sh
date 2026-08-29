@@ -573,7 +573,7 @@ QEMU_ARGS+=("${NETWORK_ARGS[@]}")
 if [[ -n "$SEED_IMAGE" ]]; then
     QEMU_ARGS+=(
         -drive "file=$SEED_IMAGE,format=raw,if=none,readonly=on,id=installer-seed"
-        -device "virtio-blk-pci,drive=installer-seed,serial=UNRAID_INSTALLER_SEED"
+        -device "virtio-blk-pci,drive=installer-seed,serial=UNRAID_INSTALLER_SEED,bus=pcie.0,addr=8"
     )
 fi
 
