@@ -343,7 +343,7 @@ EOF
 }
 
 refresh_ci_nbd_disks() {
-    local index disk image
+    local index disk image part2 part3 part4
 
     for disk in "${CI_NBD_DISKS[@]}"; do
         qemu-nbd --disconnect "$disk"
@@ -356,6 +356,19 @@ refresh_ci_nbd_disks() {
             exit 1
         fi
         echo "Reopened $image on $disk for host verification."
+        part2="$(partition_path "$disk" 2)"
+        part3="$(partition_path "$disk" 3)"
+        part4="$(partition_path "$disk" 4)"
+        for _ in {1..50}; do
+            [[ -b "$part2" && -b "$part3" && -b "$part4" ]] && break
+            partx --add "$disk" >/dev/null 2>&1 || true
+            udevadm settle
+            sleep 0.1
+        done
+        [[ -b "$part2" && -b "$part3" && -b "$part4" ]] || {
+            echo "Partition devices did not appear after reopening $disk." >&2
+            exit 1
+        }
     done
     udevadm settle
 }
@@ -366,7 +379,7 @@ run_ci_test() {
     [[ -n "$ISO" && -f "$ISO" ]] || { echo "ci requires --iso PATH." >&2; exit 1; }
     [[ -n "$UNRAID_ZIP" && -f "$UNRAID_ZIP" ]] || { echo "ci requires --unraid-zip PATH." >&2; exit 1; }
     [[ -c /dev/kvm ]] || { echo "/dev/kvm is unavailable on this runner." >&2; exit 1; }
-    for command in truncate qemu-nbd modprobe udevadm xorriso; do
+    for command in truncate qemu-nbd modprobe udevadm partx xorriso; do
         require_command "$command"
     done
 
