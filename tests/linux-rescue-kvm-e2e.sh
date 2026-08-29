@@ -1,0 +1,392 @@
+#!/bin/bash
+# Destructive end-to-end harness for the Linux Rescue KVM installer path.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+LAUNCHER="$REPO_ROOT/scripts/linux-rescue-vm.sh"
+STATE_DIR="/root/unraid-installer-e2e"
+RAM_MIB="4096"
+VCPUS="4"
+VNC_DISPLAY="1"
+NETWORK_BRIDGE=""
+ISO=""
+DISKS=()
+ACTION="${1:-}"
+VERIFY_POOL_IMPORTED=0
+VERIFY_TEMP_DIR=""
+
+usage() {
+    cat <<'USAGE'
+Usage:
+  sudo UNRAID_RESCUE_E2E_CONFIRM=ERASE_DISPOSABLE_DISKS \
+    tests/linux-rescue-kvm-e2e.sh launch --iso PATH --disk DEVICE --disk DEVICE [options]
+  sudo tests/linux-rescue-kvm-e2e.sh stop [--state-dir DIR]
+  sudo tests/linux-rescue-kvm-e2e.sh verify [--disk DEVICE --disk DEVICE] [--state-dir DIR]
+
+Actions:
+  launch   Start the installer VM with exactly two disposable whole disks.
+  stop     Stop the test VM through its QEMU monitor, then flush both disks.
+  verify   Read-only validation of partitions, the mirrored flash pool, EFI
+           loaders, and persisted host-visible disk identities.
+
+Options:
+  --iso PATH          Installer ISO to boot (required by launch)
+  --disk DEVICE       Disposable whole block device; pass exactly twice
+  --state-dir DIR     Harness and launcher state (default: /root/unraid-installer-e2e)
+  --launcher PATH     Rescue launcher to test (default: scripts/linux-rescue-vm.sh)
+  --ram MIB           Installer guest memory (default: 4096)
+  --cpus COUNT        Installer guest vCPUs (default: 4)
+  --vnc-display N     Localhost VNC display (default: 1)
+  --bridge INTERFACE  Existing Linux bridge for hosts without user/passt networking
+  --help              Show this help
+
+This harness is destructive. Use only disks supplied by a disposable test
+machine. It deliberately leaves installer-menu interaction visible through VNC.
+USAGE
+}
+
+[[ -n "$ACTION" ]] || { usage >&2; exit 2; }
+shift || true
+if [[ "$ACTION" == "help" || "$ACTION" == "--help" || "$ACTION" == "-h" ]]; then
+    usage
+    exit 0
+fi
+
+while (($#)); do
+    case "$1" in
+        --iso)
+            [[ $# -ge 2 ]] || { echo "Missing value for --iso" >&2; exit 2; }
+            ISO="$2"
+            shift 2
+            ;;
+        --disk)
+            [[ $# -ge 2 ]] || { echo "Missing value for --disk" >&2; exit 2; }
+            DISKS+=("$2")
+            shift 2
+            ;;
+        --state-dir)
+            [[ $# -ge 2 ]] || { echo "Missing value for --state-dir" >&2; exit 2; }
+            STATE_DIR="$2"
+            shift 2
+            ;;
+        --launcher)
+            [[ $# -ge 2 ]] || { echo "Missing value for --launcher" >&2; exit 2; }
+            LAUNCHER="$2"
+            shift 2
+            ;;
+        --ram)
+            [[ $# -ge 2 ]] || { echo "Missing value for --ram" >&2; exit 2; }
+            RAM_MIB="$2"
+            shift 2
+            ;;
+        --cpus)
+            [[ $# -ge 2 ]] || { echo "Missing value for --cpus" >&2; exit 2; }
+            VCPUS="$2"
+            shift 2
+            ;;
+        --vnc-display)
+            [[ $# -ge 2 ]] || { echo "Missing value for --vnc-display" >&2; exit 2; }
+            VNC_DISPLAY="$2"
+            shift 2
+            ;;
+        --bridge)
+            [[ $# -ge 2 ]] || { echo "Missing value for --bridge" >&2; exit 2; }
+            NETWORK_BRIDGE="$2"
+            shift 2
+            ;;
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
+done
+
+[[ "$EUID" -eq 0 ]] || { echo "Run this harness as root." >&2; exit 1; }
+[[ "$STATE_DIR" == /* && "$STATE_DIR" != "/" ]] || {
+    echo "--state-dir must be an absolute path other than /." >&2
+    exit 1
+}
+[[ "$RAM_MIB" =~ ^[1-9][0-9]*$ ]] || { echo "--ram must be a positive integer." >&2; exit 1; }
+[[ "$VCPUS" =~ ^[1-9][0-9]*$ ]] || { echo "--cpus must be a positive integer." >&2; exit 1; }
+[[ "$VNC_DISPLAY" =~ ^[0-9]+$ ]] || { echo "--vnc-display must be a non-negative integer." >&2; exit 1; }
+
+require_command() {
+    command -v "$1" >/dev/null 2>&1 || { echo "$1 is required." >&2; exit 1; }
+}
+
+partition_path() {
+    local disk="$1" number="$2"
+    if [[ "$disk" =~ [0-9]$ ]]; then
+        printf '%sp%s\n' "$disk" "$number"
+    else
+        printf '%s%s\n' "$disk" "$number"
+    fi
+}
+
+normalize_disks() {
+    local disk normalized
+    local normalized_disks=()
+
+    for disk in "${DISKS[@]}"; do
+        normalized="$(readlink -f "$disk")"
+        [[ -b "$normalized" ]] || { echo "Not a block device: $disk" >&2; exit 1; }
+        [[ "$(lsblk -dn -o TYPE "$normalized")" == "disk" ]] || {
+            echo "Not a whole disk: $disk" >&2
+            exit 1
+        }
+        normalized_disks+=("$normalized")
+    done
+    DISKS=("${normalized_disks[@]}")
+
+    if [[ ${#DISKS[@]} -ne 2 ]]; then
+        echo "This mirrored E2E test requires exactly two --disk arguments." >&2
+        exit 1
+    fi
+    [[ "${DISKS[0]}" != "${DISKS[1]}" ]] || {
+        echo "The two test disks must be different." >&2
+        exit 1
+    }
+}
+
+load_recorded_disks() {
+    local disk_file="$STATE_DIR/e2e-host-disks"
+    if [[ ${#DISKS[@]} -eq 0 && -f "$disk_file" ]]; then
+        mapfile -t DISKS < "$disk_file"
+    fi
+    normalize_disks
+}
+
+wait_for_qemu_exit() {
+    local pid="$1"
+    local -i remaining=20
+    while (( remaining > 0 )); do
+        if ! kill -0 "$pid" 2>/dev/null; then
+            return 0
+        fi
+        sleep 1
+        remaining=$((remaining - 1))
+    done
+    return 1
+}
+
+launch_test() {
+    local launcher_args=() disk pid
+
+    [[ "${UNRAID_RESCUE_E2E_CONFIRM:-}" == "ERASE_DISPOSABLE_DISKS" ]] || {
+        echo "Refusing destructive test without:" >&2
+        echo "  UNRAID_RESCUE_E2E_CONFIRM=ERASE_DISPOSABLE_DISKS" >&2
+        exit 1
+    }
+    [[ -n "$ISO" && -f "$ISO" ]] || { echo "launch requires --iso PATH." >&2; exit 1; }
+    [[ -x "$LAUNCHER" ]] || { echo "Launcher is not executable: $LAUNCHER" >&2; exit 1; }
+    require_command readlink
+    require_command lsblk
+    normalize_disks
+
+    mkdir -p "$STATE_DIR"
+    printf '%s\n' "${DISKS[@]}" > "$STATE_DIR/e2e-host-disks"
+
+    launcher_args=(
+        --iso "$ISO"
+        --state-dir "$STATE_DIR"
+        --ram "$RAM_MIB"
+        --cpus "$VCPUS"
+        --vnc-display "$VNC_DISPLAY"
+    )
+    if [[ -n "$NETWORK_BRIDGE" ]]; then
+        launcher_args+=(--bridge "$NETWORK_BRIDGE")
+    fi
+    for disk in "${DISKS[@]}"; do
+        launcher_args+=(--disk "$disk")
+    done
+
+    "$LAUNCHER" "${launcher_args[@]}"
+    pid="$(cat "$STATE_DIR/qemu.pid")"
+    kill -0 "$pid" 2>/dev/null || { echo "Installer VM did not remain running." >&2; exit 1; }
+
+    cat <<EOF
+
+Reusable Rescue E2E VM is running (PID $pid).
+Complete the normal installer UI through localhost VNC display :$VNC_DISPLAY:
+  1. Download or select the intended Unraid ZIP.
+  2. Choose Create Internal Boot.
+  3. Select Two disks (mirrored) with the cursor, then both test disks.
+  4. Set the boot-pool size to 16384 MiB and complete the install.
+  5. Leave the completion dialog visible; do not reboot the installed system.
+
+Then run:
+  sudo $0 stop --state-dir '$STATE_DIR'
+  sudo $0 verify --state-dir '$STATE_DIR'
+EOF
+}
+
+stop_test() {
+    local pid_file="$STATE_DIR/qemu.pid" pid disk
+
+    pid="$(cat "$pid_file" 2>/dev/null || true)"
+    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+        if [[ -S "$STATE_DIR/monitor.sock" ]] && command -v nc >/dev/null 2>&1; then
+            printf 'quit\n' | nc -U "$STATE_DIR/monitor.sock" || true
+        else
+            kill -TERM "$pid"
+        fi
+        wait_for_qemu_exit "$pid" || {
+            echo "QEMU did not stop within 20 seconds." >&2
+            exit 1
+        }
+    fi
+
+    load_recorded_disks
+    require_command blockdev
+    for disk in "${DISKS[@]}"; do
+        blockdev --flushbufs "$disk"
+    done
+    sync
+    echo "Installer VM stopped and both test disks were flushed."
+}
+
+cleanup_verify() {
+    if (( VERIFY_POOL_IMPORTED == 1 )); then
+        zpool export flash 2>/dev/null || true
+        VERIFY_POOL_IMPORTED=0
+    fi
+    if [[ -n "$VERIFY_TEMP_DIR" ]]; then
+        rm -rf "$VERIFY_TEMP_DIR"
+        VERIFY_TEMP_DIR=""
+    fi
+}
+
+verify_test() {
+    local disk part2 part3 part4
+    local part2_paths=() part3_paths=() part4_paths=()
+    local pid identity_map expected_map actual_map
+    local import_root import_output status_output boot_mount pool_cfg
+
+    for command in readlink lsblk blockdev partprobe udevadm blkid mcopy sha256sum cmp zpool zfs awk sed sort grep find head wc xargs paste mktemp; do
+        require_command "$command"
+    done
+    load_recorded_disks
+
+    if [[ -s "$STATE_DIR/qemu.pid" ]]; then
+        pid="$(cat "$STATE_DIR/qemu.pid")"
+        if kill -0 "$pid" 2>/dev/null; then
+            echo "QEMU is still running. Stop it before verification." >&2
+            exit 1
+        fi
+    fi
+
+    for disk in "${DISKS[@]}"; do
+        blockdev --flushbufs "$disk"
+        partprobe "$disk"
+    done
+    udevadm settle
+
+    for disk in "${DISKS[@]}"; do
+        part2="$(partition_path "$disk" 2)"
+        part3="$(partition_path "$disk" 3)"
+        part4="$(partition_path "$disk" 4)"
+        [[ -b "$part2" && -b "$part3" && -b "$part4" ]] || {
+            echo "Expected p2, p3, and p4 on $disk." >&2
+            exit 1
+        }
+        [[ "$(blkid -s TYPE -o value "$part2")" == "vfat" ]] || {
+            echo "Expected a vfat EFI partition at $part2." >&2
+            exit 1
+        }
+        [[ "$(blkid -s TYPE -o value "$part3")" == "zfs_member" ]] || {
+            echo "Expected a ZFS member at $part3." >&2
+            exit 1
+        }
+        part2_paths+=("$part2")
+        part3_paths+=("$part3")
+        part4_paths+=("$part4")
+    done
+
+    [[ "$(blockdev --getsize64 "${part3_paths[0]}")" == "$(blockdev --getsize64 "${part3_paths[1]}")" ]] || {
+        echo "The mirrored ZFS partitions differ in size." >&2
+        exit 1
+    }
+    [[ "$(blockdev --getsize64 "${part4_paths[0]}")" == "$(blockdev --getsize64 "${part4_paths[1]}")" ]] || {
+        echo "The data partitions differ in size." >&2
+        exit 1
+    }
+
+    VERIFY_TEMP_DIR="$(mktemp -d)"
+    import_root="$VERIFY_TEMP_DIR/import"
+    mkdir -p "$import_root"
+    trap cleanup_verify EXIT
+
+    mcopy -o -i "${part2_paths[0]}" ::/EFI/BOOT/BOOTX64.EFI "$VERIFY_TEMP_DIR/disk0-BOOTX64.EFI"
+    mcopy -o -i "${part2_paths[1]}" ::/EFI/BOOT/BOOTX64.EFI "$VERIFY_TEMP_DIR/disk1-BOOTX64.EFI"
+    cmp "$VERIFY_TEMP_DIR/disk0-BOOTX64.EFI" "$VERIFY_TEMP_DIR/disk1-BOOTX64.EFI"
+
+    if zpool list -H -o name 2>/dev/null | grep -qx flash; then
+        echo "A pool named flash is already imported; refusing ambiguous verification." >&2
+        exit 1
+    fi
+    import_output="$(zpool import -d "${part3_paths[0]}" -d "${part3_paths[1]}")"
+    grep -q '^  pool: flash$' <<<"$import_output"
+    grep -q 'mirror-0.*ONLINE' <<<"$import_output"
+
+    zpool import -N -o readonly=on -o cachefile=none -R "$import_root" \
+        -d "${part3_paths[0]}" -d "${part3_paths[1]}" flash
+    VERIFY_POOL_IMPORTED=1
+    status_output="$(zpool status -P flash)"
+    grep -q '^ state: ONLINE$' <<<"$status_output"
+    grep -q 'errors: No known data errors' <<<"$status_output"
+    grep -Fq "${part3_paths[0]}" <<<"$status_output"
+    grep -Fq "${part3_paths[1]}" <<<"$status_output"
+
+    zfs mount flash/boot
+    boot_mount="$(zfs get -H -o value mountpoint flash/boot)"
+    [[ "$boot_mount" == "$import_root"/* && -d "$boot_mount/config" ]] || {
+        echo "Unexpected boot dataset mountpoint: $boot_mount" >&2
+        exit 1
+    }
+    pool_cfg="$(find "$boot_mount/config/pools" -maxdepth 1 -type f -name '*.cfg' \
+        -exec grep -l '^diskId' {} \; | head -n1)"
+    [[ -n "$pool_cfg" ]] || { echo "No boot-pool identity file found." >&2; exit 1; }
+
+    identity_map="$STATE_DIR/disk-identities.tsv"
+    [[ -s "$identity_map" ]] || { echo "Missing identity handoff: $identity_map" >&2; exit 1; }
+    expected_map="$VERIFY_TEMP_DIR/expected-ids"
+    actual_map="$VERIFY_TEMP_DIR/actual-ids"
+    awk -F '\t' 'NF == 2 {print $2}' "$identity_map" | sort > "$expected_map"
+    sed -n 's/^diskId\(\.[0-9][0-9]*\)\?="\([^"]*\)"/\2/p' "$pool_cfg" | sort > "$actual_map"
+    [[ "$(wc -l < "$expected_map" | xargs)" == "2" ]] || {
+        echo "Identity handoff does not contain exactly two disks." >&2
+        exit 1
+    }
+    cmp "$expected_map" "$actual_map"
+    if grep -R -E 'QEMU_NVMe_Ctrl_' "$boot_mount/config" >/dev/null 2>&1; then
+        echo "Nested QEMU NVMe identity persisted in the installed configuration." >&2
+        exit 1
+    fi
+
+    echo "Linux Rescue KVM E2E verification passed."
+    echo "ZFS mirror members: ${part3_paths[0]}, ${part3_paths[1]}"
+    echo "EFI loader SHA256: $(sha256sum "$VERIFY_TEMP_DIR/disk0-BOOTX64.EFI" | awk '{print $1}')"
+    echo "Persisted host IDs: $(paste -sd, "$actual_map")"
+    echo "Partition layout:"
+    lsblk -o NAME,PATH,SIZE,TYPE,FSTYPE,PARTLABEL,MODEL,SERIAL "${DISKS[@]}"
+    cleanup_verify
+    trap - EXIT
+}
+
+case "$ACTION" in
+    launch) launch_test ;;
+    stop) stop_test ;;
+    verify) verify_test ;;
+    help|--help|-h) usage ;;
+    *)
+        echo "Unknown action: $ACTION" >&2
+        usage >&2
+        exit 2
+        ;;
+esac

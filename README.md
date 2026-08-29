@@ -18,6 +18,7 @@ The toolchain focuses on producing bootable installer artifacts (ISO and IMG), p
 - `persistent/`: seed content included in media builds.
 - `build/`: generated metadata (for example, version lock files).
 - `docs/`: user-facing documentation for build usage.
+- `tests/`: opt-in destructive integration harnesses for disposable systems.
 
 ## Documentation Index
 
@@ -34,6 +35,9 @@ Start here, then use the detailed guides below:
    - Linux Rescue and temporary-QEMU workflow for installing to physical disks
      without persisting virtual disk identities. Hetzner is the first validated
      provider.
+5. `docs/linux-rescue-kvm-e2e.md`
+   - Reusable destructive KVM test procedure for disposable Linux hosts, with
+     post-install ZFS, EFI, and physical-identity verification.
 
 The Rescue-side entry point for that workflow is
 `scripts/linux-rescue-vm.sh`.
