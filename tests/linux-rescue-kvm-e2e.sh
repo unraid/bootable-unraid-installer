@@ -580,10 +580,14 @@ verify_test() {
         -d "${part3_paths[0]}" -d "${part3_paths[1]}" flash
     VERIFY_POOL_IMPORTED=1
     status_output="$(zpool status -P flash)"
-    grep -q '^ state: ONLINE$' <<<"$status_output"
-    grep -q 'errors: No known data errors' <<<"$status_output"
-    grep -Fq "${part3_paths[0]}" <<<"$status_output"
-    grep -Fq "${part3_paths[1]}" <<<"$status_output"
+    if ! grep -q '^ state: ONLINE$' <<<"$status_output" ||
+        ! grep -q 'errors: No known data errors' <<<"$status_output" ||
+        ! grep -Fq "${part3_paths[0]}" <<<"$status_output" ||
+        ! grep -Fq "${part3_paths[1]}" <<<"$status_output"; then
+        echo "The imported flash pool did not contain the expected healthy mirror:" >&2
+        printf '%s\n' "$status_output" >&2
+        exit 1
+    fi
 
     zfs mount flash/boot
     boot_mount="$(zfs get -H -o value mountpoint flash/boot)"
@@ -605,7 +609,14 @@ verify_test() {
         echo "Identity handoff does not contain exactly two disks." >&2
         exit 1
     }
-    cmp "$expected_map" "$actual_map"
+    if ! cmp "$expected_map" "$actual_map"; then
+        echo "Persisted boot-pool identities do not match the physical-ID handoff." >&2
+        echo "Expected:" >&2
+        cat "$expected_map" >&2
+        echo "Actual:" >&2
+        cat "$actual_map" >&2
+        exit 1
+    fi
     if grep -R -E 'QEMU_NVMe_Ctrl_' "$boot_mount/config" >/dev/null 2>&1; then
         echo "Nested QEMU NVMe identity persisted in the installed configuration." >&2
         exit 1
