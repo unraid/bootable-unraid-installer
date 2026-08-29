@@ -32,7 +32,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          mapfile -t scripts < <(git ls-files 'scripts/*.sh')
+          mapfile -t scripts < <(git ls-files 'scripts/*.sh' 'tests/*.sh')
           if [[ "${#scripts[@]}" -eq 0 ]]; then
             echo "No shell scripts found."
             exit 0

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "packages": {
+    ".": {
+      "release-type": "simple",
+      "versioning": "service-pack",
+      "component": "Installer",
+      "changelog-path": "CHANGELOG.md",
+      "version-file": "installer-version.txt"
+    }
+  },
+  "include-component-in-tag": true,
+  "include-v-in-tag": false,
+  "tag-separator": "-",
+  "draft": false
+}

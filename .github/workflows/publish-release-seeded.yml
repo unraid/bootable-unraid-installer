@@ -1,32 +1,30 @@
 name: Publish Seeded Install Release
 
 on:
+  workflow_call:
+    inputs:
+      source_run_id:
+        description: "Run database ID containing exact-release build artifacts"
+        required: true
+        type: string
+      release_tag:
+        description: "Existing Release Please tag"
+        required: true
+        type: string
+      release_sha:
+        description: "Exact Release Please source SHA"
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       source_run_id:
-        description: "GitHub Actions run ID from Build Install Images (default: latest)"
-        required: false
-        default: "latest"
+        description: "Successful Build Install Images run database ID"
+        required: true
         type: string
       release_tag:
-        description: "Release tag to create/update (example: Installer-7.3.0)"
+        description: "Existing Release Please tag (example: Installer-7.4.0)"
         required: true
         type: string
-      release_name:
-        description: "Release name (defaults to tag if empty)"
-        required: false
-        default: ""
-        type: string
-      draft:
-        description: "Create as draft release"
-        required: true
-        default: true
-        type: boolean
-      prerelease:
-        description: "Mark release as prerelease"
-        required: true
-        default: false
-        type: boolean
 
 permissions:
   actions: read
@@ -36,170 +34,114 @@ jobs:
   publish-release:
     name: Publish seeded release assets
     runs-on: ubuntu-24.04
-
     steps:
-      - name: Checkout repository
-        # actions/checkout v4, pinned to the tag target. Refresh with:
-        # git ls-remote https://github.com/actions/checkout.git refs/tags/v4
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-        with:
-          fetch-depth: 0
-
-      - name: List recent Build Install Images runs
+      - name: Resolve and verify release provenance
+        id: release
         shell: bash
-        run: |
-          set -euo pipefail
-          echo "=== Recent completed Build Install Images runs ==="
-          echo ""
-          gh run list \
-            --workflow=build-images.yml \
-            --status=completed \
-            --limit=10 \
-            --json=number,createdAt,status,conclusion \
-            --template='{{range .}}{{.number}} | {{.createdAt}} | {{.status}} | {{.conclusion}}{{"\n"}}{{end}}'
-          echo ""
-          echo "Optionally override by setting source_run_id to a specific run number."
         env:
           GH_TOKEN: ${{ github.token }}
-
-      - name: Resolve source run ID
-        id: run-id
-        shell: bash
-        run: |
-          set -euo pipefail
-          source_run_id="${{ inputs.source_run_id }}"
-
-          if [[ "$source_run_id" == "latest" ]]; then
-            db_id=$(gh run list \
-              --workflow=build-images.yml \
-              --status=completed \
-              --limit=1 \
-              --json=databaseId,number \
-              --jq='.[0].databaseId')
-            run_num=$(gh run list \
-              --workflow=build-images.yml \
-              --status=completed \
-              --limit=1 \
-              --json=databaseId,number \
-              --jq='.[0].number')
-            echo "Resolved 'latest' to run number $run_num (database ID: $db_id)"
-            source_run_id="$db_id"
-          else
-            db_id=$(gh run list \
-              --workflow=build-images.yml \
-              --limit=50 \
-              --json=databaseId,number \
-              --jq="map(select(.number == ($source_run_id | tonumber))) | .[0].databaseId")
-            [[ -n "$db_id" && "$db_id" != "null" ]] || {
-              echo "Could not resolve run number $source_run_id to a database ID" >&2
-              exit 1
-            }
-            echo "Resolved run number $source_run_id to database ID: $db_id"
-            source_run_id="$db_id"
-          fi
-
-          echo "run_id=$source_run_id" >> "$GITHUB_OUTPUT"
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      - name: Resolve release metadata
-        id: meta
-        shell: bash
+          EXPECTED_RELEASE_SHA: ${{ inputs.release_sha }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
         run: |
           set -euo pipefail
 
-          release_tag="${{ inputs.release_tag }}"
-          release_name="${{ inputs.release_name }}"
-
-          if [[ -z "$release_name" ]]; then
-            release_name="$release_tag"
+          if [[ ! "$RELEASE_TAG" =~ ^Installer-[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Release tag must use Installer-<SemVer>: $RELEASE_TAG" >&2
+            exit 1
           fi
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null
 
-          release_version="${release_tag#Installer-}"
-          release_version="$(tr -cs '[:alnum:]._' '-' <<< "$release_version" | sed 's/^-//; s/-$//')"
-          if [[ -z "$release_version" ]]; then
-            echo "Error: sanitized release version is empty for release tag '$release_tag'" >&2
+          tag_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" --jq='.object.sha')"
+          if [[ -n "$EXPECTED_RELEASE_SHA" && "$tag_sha" != "$EXPECTED_RELEASE_SHA" ]]; then
+            echo "Release tag points to $tag_sha, expected $EXPECTED_RELEASE_SHA" >&2
             exit 1
           fi
 
-          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
-          echo "release_name=$release_name" >> "$GITHUB_OUTPUT"
-          echo "release_version=$release_version" >> "$GITHUB_OUTPUT"
+          source_sha="$(gh run view "$SOURCE_RUN_ID" --json headSha --jq='.headSha')"
+          if [[ "$source_sha" != "$tag_sha" ]]; then
+            echo "Source run built $source_sha, but $RELEASE_TAG points to $tag_sha" >&2
+            exit 1
+          fi
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            conclusion="$(gh run view "$SOURCE_RUN_ID" --json conclusion --jq='.conclusion')"
+            [[ "$conclusion" == "success" ]] || {
+              echo "Manual publication requires a successful source run: $conclusion" >&2
+              exit 1
+            }
+          fi
 
-      - name: Download IMG artifact from source run
-        # actions/download-artifact v4, pinned to the tag target. Refresh with:
-        # git ls-remote https://github.com/actions/download-artifact.git refs/tags/v4
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+          echo "release_sha=$tag_sha" >> "$GITHUB_OUTPUT"
+          echo "release_version=${RELEASE_TAG#Installer-}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout exact released source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ steps.release.outputs.release_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify release checkout
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ steps.release.outputs.release_sha }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          test "$(git describe --tags --exact-match "$RELEASE_SHA")" = "$RELEASE_TAG"
+
+      - name: Download exact-release bundled image
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           github-token: ${{ github.token }}
-          run-id: ${{ steps.run-id.outputs.run_id }}
+          run-id: ${{ inputs.source_run_id }}
           pattern: install-user-img-*
           merge-multiple: true
           path: release-assets
 
-      - name: Validate downloaded release assets
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          required_files=(
-            release-assets/install-user.img
-          )
-
-          for file in "${required_files[@]}"; do
-            [[ -s "$file" ]] || { echo "Missing required file: $file" >&2; exit 1; }
-          done
-
-          echo "Release assets ready:"
-          ls -lh release-assets
-
-      - name: Prepare versioned bundled IMG for release
+      - name: Prepare bundled image and checksums
         shell: bash
         env:
-          RELEASE_VERSION: ${{ steps.meta.outputs.release_version }}
+          RELEASE_VERSION: ${{ steps.release.outputs.release_version }}
         run: |
           set -euo pipefail
-          img_asset="unraid-installer-${RELEASE_VERSION}-bundled.img.zip"
+          [[ -s release-assets/install-user.img ]] || {
+            echo "Missing required file: release-assets/install-user.img" >&2
+            exit 1
+          }
 
-          echo "Compressing bundled installer image as ${img_asset}..."
-          zip -9 -j "release-assets/${img_asset}" release-assets/install-user.img
+          asset="release-assets/unraid-installer-${RELEASE_VERSION}-bundled.img.zip"
+          zip -9 -j "$asset" release-assets/install-user.img
           rm -f release-assets/install-user.img
+          md5sum "$asset" | awk '{print $1}' > "${asset}.md5"
+          sha256sum "$asset" | awk '{print $1}' > "${asset}.sha256"
 
-          echo "Compressed sizes:"
-          ls -lh "release-assets/${img_asset}"
-
-      - name: Generate per-file MD5 checksums
-        shell: bash
-        run: |
-          set -euo pipefail
-          for asset in release-assets/unraid-installer-*-bundled.img.zip; do
-            md5sum "$asset" | awk '{print $1}' > "${asset}.md5"
-          done
-          ls -lh release-assets/*.md5
-
-      - name: Create or update GitHub release
-        # softprops/action-gh-release v2, pinned to the tag target. Refresh with:
-        # git ls-remote https://github.com/softprops/action-gh-release.git refs/tags/v2
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
-        with:
-          tag_name: ${{ steps.meta.outputs.release_tag }}
-          name: ${{ steps.meta.outputs.release_name }}
-          draft: ${{ inputs.draft }}
-          prerelease: ${{ inputs.prerelease }}
-          overwrite_files: true
-          files: |
-            release-assets/unraid-installer-*-bundled.img.zip
-            release-assets/unraid-installer-*-bundled.img.zip.md5
-          generate_release_notes: false
-
-      - name: Update release download options
+      - name: Attach assets to the existing Release Please release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ steps.meta.outputs.release_tag }}
-          RELEASE_VERSION: ${{ steps.meta.outputs.release_version }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
-          ./scripts/update-release-download-options.sh \
-            --release-tag "$RELEASE_TAG" \
-            --release-version "$RELEASE_VERSION"
+          gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            release-assets/unraid-installer-*-bundled.img.zip \
+            release-assets/unraid-installer-*-bundled.img.zip.md5 \
+            release-assets/unraid-installer-*-bundled.img.zip.sha256 \
+            --clobber
+
+      - name: Verify anonymous release downloads
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          downloaded="$(mktemp -d)"
+          trap 'rm -rf "$downloaded"' EXIT
+          for asset in release-assets/*; do
+            filename="${asset##*/}"
+            curl --fail --silent --show-error --location --retry 5 --retry-all-errors \
+              --output "$downloaded/$filename" \
+              "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/$RELEASE_TAG/$filename"
+            cmp "$asset" "$downloaded/$filename"
+          done

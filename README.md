@@ -10,6 +10,7 @@ The toolchain focuses on producing bootable installer artifacts (ISO and IMG), p
 - Produces ISO and USB-ready IMG outputs.
 - Packages persistent seed content used by installer media.
 - Provides utility scripts for dependencies, kernel/ZFS cache builds, and boot media setup.
+- Uses Release Please to version the installer and publish assets built from the exact release tag.
 
 ## Repo Areas
 
@@ -17,6 +18,7 @@ The toolchain focuses on producing bootable installer artifacts (ISO and IMG), p
 - `persistent/`: seed content included in media builds.
 - `build/`: generated metadata (for example, version lock files).
 - `docs/`: user-facing documentation for build usage.
+- `tests/`: opt-in destructive integration harnesses for disposable systems.
 
 ## Documentation Index
 
@@ -29,6 +31,16 @@ Start here, then use the detailed guides below:
    - High-level build-chain scope, outputs, and script responsibilities.
 3. `docs/USER_COMMANDS.md`
    - Command reference, build modes, common options, and troubleshooting.
+4. `docs/linux-rescue-install.md`
+   - Linux Rescue and temporary-QEMU workflow for installing to physical disks
+     without persisting virtual disk identities. Hetzner is the first validated
+     provider.
+5. `docs/linux-rescue-kvm-e2e.md`
+   - Reusable KVM test procedure for disposable Linux hosts and GitHub-hosted
+     CI, with post-install ZFS, EFI, and physical-identity verification.
+
+The Rescue-side entry point for that workflow is
+`scripts/linux-rescue-vm.sh`.
 
 ## Typical Build Entry Point
 

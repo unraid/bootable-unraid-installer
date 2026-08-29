@@ -759,9 +759,9 @@ sudo cp "$SCRIPT_DIR/create_internal_boot_user.sh" "$ONBOARDING_ASSET_DIR/create
 sudo cp "$SCRIPT_DIR/create_flash_boot.sh" "$ONBOARDING_ASSET_DIR/create_flash_boot.sh"
 sudo cp "$SCRIPT_DIR/zip.sh" "$ONBOARDING_ASSET_DIR/zip.sh"
 sudo cp "$SCRIPT_DIR/version_check.sh" "$ONBOARDING_ASSET_DIR/version_check.sh"
-installer_version="$(read_lock_json_string "version" "$(cat "$REPO_ROOT/build/unraid-release-lock.json")")"
-if [[ ! "$installer_version" =~ ^[0-9]+(\.[0-9]+)+$ ]]; then
-  echo "Invalid installer version in build/unraid-release-lock.json: $installer_version" >&2
+installer_version="$(tr -d '[:space:]' < "$REPO_ROOT/installer-version.txt")"
+if [[ ! "$installer_version" =~ ^[0-9]+(\.[0-9]+)+(-sp\.[1-9][0-9]*)?$ ]]; then
+  echo "Invalid installer version in installer-version.txt: $installer_version" >&2
   exit 1
 fi
 printf '%s\n' "$installer_version" | sudo tee "$ONBOARDING_ASSET_DIR/installer-version" >/dev/null
@@ -2382,21 +2382,21 @@ echo "EFI GRUB loaded"
 set timeout=5
 
 # Prefer explicit CD partition nodes first; some BIOS paths expose ISO there.
-if [ -e (cd0,gpt1)/boot/vmlinuz ]; then
+if [ -e '(cd0,gpt1)/boot/vmlinuz' ]; then
  set root=(cd0,gpt1)
-elif [ -e (cd0,msdos1)/boot/vmlinuz ]; then
+elif [ -e '(cd0,msdos1)/boot/vmlinuz' ]; then
  set root=(cd0,msdos1)
-elif [ -e (cd0)/boot/vmlinuz ]; then
+elif [ -e '(cd0)/boot/vmlinuz' ]; then
  set root=(cd0)
 else
  search --no-floppy --label --set=root INSTALLER || search --no-floppy --label --set=root ONBOARDING || search --no-floppy --file --set=root /boot/vmlinuz || true
 fi
 if [ "\$root" = "memdisk" ] || [ "\$root" = "(memdisk)" ] || [ -z "\$root" ]; then
- if [ -e (cd0,gpt1)/boot/vmlinuz ]; then
+ if [ -e '(cd0,gpt1)/boot/vmlinuz' ]; then
   set root=(cd0,gpt1)
- elif [ -e (cd0,msdos1)/boot/vmlinuz ]; then
+ elif [ -e '(cd0,msdos1)/boot/vmlinuz' ]; then
   set root=(cd0,msdos1)
- elif [ -e (cd0)/boot/vmlinuz ]; then
+ elif [ -e '(cd0)/boot/vmlinuz' ]; then
   set root=(cd0)
  else
   set root=(cd0)
@@ -2450,21 +2450,21 @@ set timeout=5
 set timeout_style=menu
 set default=0
 
-if [ -e (cd0,gpt1)/boot/vmlinuz ]; then
+if [ -e '(cd0,gpt1)/boot/vmlinuz' ]; then
  set root=(cd0,gpt1)
-elif [ -e (cd0,msdos1)/boot/vmlinuz ]; then
+elif [ -e '(cd0,msdos1)/boot/vmlinuz' ]; then
  set root=(cd0,msdos1)
-elif [ -e (cd0)/boot/vmlinuz ]; then
+elif [ -e '(cd0)/boot/vmlinuz' ]; then
  set root=(cd0)
 else
  search --no-floppy --label --set=root INSTALLER || search --no-floppy --label --set=root ONBOARDING || search --no-floppy --file --set=root /boot/vmlinuz || true
 fi
 if [ "\$root" = "memdisk" ] || [ "\$root" = "(memdisk)" ] || [ -z "\$root" ]; then
- if [ -e (cd0,gpt1)/boot/vmlinuz ]; then
+ if [ -e '(cd0,gpt1)/boot/vmlinuz' ]; then
   set root=(cd0,gpt1)
- elif [ -e (cd0,msdos1)/boot/vmlinuz ]; then
+ elif [ -e '(cd0,msdos1)/boot/vmlinuz' ]; then
   set root=(cd0,msdos1)
- elif [ -e (cd0)/boot/vmlinuz ]; then
+ elif [ -e '(cd0)/boot/vmlinuz' ]; then
   set root=(cd0)
  else
   set root=(cd0)
@@ -2583,21 +2583,21 @@ fi
 
 menuentry "Internal Boot Setup" {
  echo "Loading installer environment..."
- if [ -e (cd0,gpt1)/boot/vmlinuz ]; then
+ if [ -e '(cd0,gpt1)/boot/vmlinuz' ]; then
   set root=(cd0,gpt1)
- elif [ -e (cd0,msdos1)/boot/vmlinuz ]; then
+ elif [ -e '(cd0,msdos1)/boot/vmlinuz' ]; then
   set root=(cd0,msdos1)
- elif [ -e (cd0)/boot/vmlinuz ]; then
+ elif [ -e '(cd0)/boot/vmlinuz' ]; then
   set root=(cd0)
  else
     search --no-floppy --label --set=root INSTALLER || search --no-floppy --label --set=root ONBOARDING || search --no-floppy --file --set=root /boot/vmlinuz || true
  fi
  if [ "\$root" = "memdisk" ] || [ "\$root" = "(memdisk)" ] || [ -z "\$root" ]; then
-   if [ -e (cd0,gpt1)/boot/vmlinuz ]; then
+   if [ -e '(cd0,gpt1)/boot/vmlinuz' ]; then
     set root=(cd0,gpt1)
-   elif [ -e (cd0,msdos1)/boot/vmlinuz ]; then
+   elif [ -e '(cd0,msdos1)/boot/vmlinuz' ]; then
     set root=(cd0,msdos1)
-   elif [ -e (cd0)/boot/vmlinuz ]; then
+   elif [ -e '(cd0)/boot/vmlinuz' ]; then
     set root=(cd0)
    else
     set root=(cd0)
