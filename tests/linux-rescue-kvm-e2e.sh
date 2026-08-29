@@ -310,7 +310,9 @@ else
 fi
 
 sync
-poweroff -f
+while true; do
+    sleep 3600
+done
 EOF
     chmod 0755 "$seed_runtime/menu.sh"
     sync
@@ -340,7 +342,7 @@ EOF
 }
 
 run_ci_test() {
-    local pid deadline
+    local pid deadline result=""
 
     [[ -n "$ISO" && -f "$ISO" ]] || { echo "ci requires --iso PATH." >&2; exit 1; }
     [[ -n "$UNRAID_ZIP" && -f "$UNRAID_ZIP" ]] || { echo "ci requires --unraid-zip PATH." >&2; exit 1; }
@@ -374,19 +376,26 @@ run_ci_test() {
     tail -n +1 -F "$STATE_DIR/serial.log" &
     CI_TAIL_PID=$!
     deadline=$((SECONDS + 1200))
-    while kill -0 "$pid" 2>/dev/null && (( SECONDS < deadline )); do
+    while (( SECONDS < deadline )); do
+        if grep -q '^UNRAID_E2E_RESULT=success' "$STATE_DIR/serial.log"; then
+            result="success"
+            break
+        fi
+        if grep -q '^UNRAID_E2E_RESULT=failure ' "$STATE_DIR/serial.log"; then
+            result="failure"
+            break
+        fi
+        if ! kill -0 "$pid" 2>/dev/null; then
+            result="guest-exited"
+            break
+        fi
         sleep 2
     done
-    if kill -0 "$pid" 2>/dev/null; then
-        echo "Timed out waiting for the unattended installer VM." >&2
-        tail -n 200 "$STATE_DIR/serial.log" >&2 || true
-        exit 1
-    fi
     kill "$CI_TAIL_PID" 2>/dev/null || true
     wait "$CI_TAIL_PID" 2>/dev/null || true
     CI_TAIL_PID=""
-    if ! grep -q '^UNRAID_E2E_RESULT=success$' "$STATE_DIR/serial.log"; then
-        echo "The unattended installer did not report success." >&2
+    if [[ "$result" != "success" ]]; then
+        echo "The unattended installer did not report success (result: ${result:-timeout})." >&2
         tail -n 200 "$STATE_DIR/serial.log" >&2 || true
         exit 1
     fi
