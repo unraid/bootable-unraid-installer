@@ -134,6 +134,61 @@ short_serial() {
     udevadm info --query=property --name="$1" | awk -F= '/^ID_SERIAL_SHORT=/{print $2; exit}'
 }
 
+assert_disk_idle() {
+    local disk="$1" node node_real node_name holder_dir swap_device pool_device
+    local -a nodes holders
+
+    mapfile -t nodes < <(lsblk -nrpo NAME "$disk")
+    ((${#nodes[@]} > 0)) || {
+        echo "Could not enumerate target disk: $disk" >&2
+        return 1
+    }
+
+    for node in "${nodes[@]}"; do
+        if lsblk -nrpo MOUNTPOINTS "$node" | grep -qv '^$'; then
+            echo "A target disk or partition is mounted: $node" >&2
+            return 1
+        fi
+
+        while read -r swap_device _; do
+            [[ "$swap_device" == Filename ]] && continue
+            if [[ "$(readlink -f "$swap_device")" == "$(readlink -f "$node")" ]]; then
+                echo "A target disk or partition is active swap: $node" >&2
+                return 1
+            fi
+        done < /proc/swaps
+
+        node_real="$(readlink -f "$node")"
+        node_name="${node_real##*/}"
+        holder_dir="/sys/class/block/$node_name/holders"
+        holders=()
+        if [[ -d "$holder_dir" ]]; then
+            shopt -s nullglob
+            holders=("$holder_dir"/*)
+            shopt -u nullglob
+        fi
+        if ((${#holders[@]} > 0)); then
+            printf 'A target disk or partition has active block holders: %s (' "$node" >&2
+            printf '%s ' "${holders[@]##*/}" >&2
+            echo ')' >&2
+            return 1
+        fi
+    done
+
+    if command -v zpool >/dev/null 2>&1; then
+        while read -r pool_device; do
+            [[ "$pool_device" == /dev/* ]] || continue
+            pool_device="$(readlink -f "$pool_device")"
+            for node in "${nodes[@]}"; do
+                if [[ "$pool_device" == "$(readlink -f "$node")" ]]; then
+                    echo "A target disk or partition belongs to an active ZFS pool: $node" >&2
+                    return 1
+                fi
+            done
+        done < <(zpool status -P 2>/dev/null | awk '{for (i = 1; i <= NF; i++) if ($i ~ /^\/dev\//) print $i}')
+    fi
+}
+
 ovmf_pair="$(find_ovmf_pair || true)"
 [[ -n "$ovmf_pair" ]] || {
     echo "Could not find a matching OVMF CODE/VARS pair." >&2
@@ -153,10 +208,7 @@ for disk in "${DISKS[@]}"; do
         echo "Pass a whole disk, not a partition: $disk" >&2
         exit 1
     }
-    if lsblk -nrpo MOUNTPOINTS "$disk" | grep -qv '^$'; then
-        echo "A target disk or partition is mounted: $disk" >&2
-        exit 1
-    fi
+    assert_disk_idle "$disk"
     disk_serial="$(short_serial "$disk")"
     if [[ ! "$disk_serial" =~ ^[[:alnum:]_.-]+$ ]]; then
         echo "Unsupported disk serial for QEMU handoff: $disk_serial" >&2
@@ -224,6 +276,7 @@ QEMU_ARGS=(
     -drive "if=pflash,format=raw,file=$OVMF_VARS"
     -drive "file=$ISO,media=cdrom,format=raw,readonly=on"
     -boot "once=d,menu=on"
+    -no-reboot
     -netdev "user,id=net0"
     -device "e1000,netdev=net0"
     -fw_cfg "name=opt/unraid/physical-disk-map,file=$IDENTITY_MAP"

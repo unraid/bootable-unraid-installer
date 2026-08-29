@@ -55,7 +55,8 @@ lsblk -o NAME,SIZE,MODEL,SERIAL,FSTYPE,MOUNTPOINTS
 ```
 
 Linux can swap `nvme0n1` and `nvme1n1` across reboots. Match disks by model
-and serial, and confirm that no target disk or partition is mounted.
+and serial. The launcher confirms that no target disk or partition is mounted,
+active swap, claimed by another block device, or part of an imported ZFS pool.
 
 ## 3. Start the official installer in QEMU
 
@@ -70,14 +71,17 @@ sudo ./scripts/hetzner-rescue-vm.sh \
 
 The helper:
 
-- refuses partitions and mounted target disks;
+- refuses partitions and target disks that are mounted, active swap, held by
+  another block device, or part of an imported ZFS pool;
 - records each host-visible model and serial;
 - starts a UEFI KVM guest with NAT networking;
 - passes one or two physical whole disks through as NVMe devices;
 - uses stable guest PCI addresses so disk argument order is predictable;
 - passes the physical identity map through QEMU `fw_cfg` without adding a
   guest block device;
-- binds VNC to Rescue localhost only; and
+- binds VNC to Rescue localhost only;
+- exits instead of booting from the installed disks if the guest requests a
+  reboot; and
 - writes a fallback installer command to
   `/root/unraid-installer-vm/installer-command.txt`.
 
