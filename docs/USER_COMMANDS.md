@@ -214,7 +214,10 @@ argument. See [Hetzner Rescue installation](hetzner-rescue-install.md).
 physical disk identities, passes them through QEMU `fw_cfg`, and starts the
 official installer ISO in a localhost-only VNC guest. The installer consumes
 the handoff automatically; the generated command with explicit overrides is
-a fallback.
+a fallback. The release-published launcher downloads and SHA256-verifies its
+matching online ISO automatically. `--iso PATH` selects a local ISO instead;
+`--release-tag Installer-<version>` selects a release when running the source
+tree version of the launcher.
 
 ### Restore Existing Internal Boot
 

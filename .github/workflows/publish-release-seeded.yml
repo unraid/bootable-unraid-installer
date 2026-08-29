@@ -168,14 +168,15 @@ jobs:
           echo "Compressed sizes:"
           ls -lh "release-assets/${img_asset}"
 
-      - name: Generate per-file MD5 checksums
+      - name: Generate per-file checksums
         shell: bash
         run: |
           set -euo pipefail
           for asset in release-assets/unraid-installer-*-bundled.img.zip; do
             md5sum "$asset" | awk '{print $1}' > "${asset}.md5"
+            sha256sum "$asset" | awk '{print $1}' > "${asset}.sha256"
           done
-          ls -lh release-assets/*.md5
+          ls -lh release-assets/*.md5 release-assets/*.sha256
 
       - name: Create or update GitHub release
         # softprops/action-gh-release v2, pinned to the tag target. Refresh with:
@@ -190,6 +191,7 @@ jobs:
           files: |
             release-assets/unraid-installer-*-bundled.img.zip
             release-assets/unraid-installer-*-bundled.img.zip.md5
+            release-assets/unraid-installer-*-bundled.img.zip.sha256
           generate_release_notes: false
 
       - name: Update release download options

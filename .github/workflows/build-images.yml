@@ -359,6 +359,15 @@ jobs:
           path: artifacts/checksums.sha256
           if-no-files-found: warn
 
+      - name: Upload Hetzner Rescue launcher
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: install-user-hetzner-launcher-${{ github.run_number }}
+          retention-days: ${{ env.ARTIFACT_RETENTION_DAYS }}
+          path: scripts/hetzner-rescue-vm.sh
+          if-no-files-found: error
+
       - name: Upload user published outputs
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

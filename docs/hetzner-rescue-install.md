@@ -33,14 +33,14 @@ installer reads it automatically.
 Activate Linux Rescue in Hetzner Robot with your SSH key and reboot the
 server. Confirm the Rescue SSH host key before signing in.
 
-Install QEMU, OVMF, and a VNC client or noVNC. Package names vary by Rescue
-image. The helper needs:
+Install QEMU and OVMF. Use a local VNC client or noVNC to reach the guest.
+Package names vary by Rescue image. The helper needs:
 
 - `qemu-system-x86_64`;
 - `/dev/kvm`;
 - a matching OVMF `CODE` and `VARS` firmware pair;
 - `udevadm`, `lsblk`, and `blockdev`; and
-- the official Unraid Installer ISO on the Rescue filesystem.
+- `curl` or `wget` and `sha256sum` to download and verify the released ISO.
 
 Keep VNC and noVNC bound to localhost and reach them through SSH. Never expose
 either service on the public interface.
@@ -60,14 +60,22 @@ active swap, claimed by another block device, or part of an imported ZFS pool.
 
 ## 3. Start the official installer in QEMU
 
-Clone or copy this repository into Rescue, then run:
+Download and run the launcher published with the latest installer release:
 
 ```bash
-sudo ./scripts/hetzner-rescue-vm.sh \
-  --iso /root/unraid-installer-online.iso \
+curl -fsSL https://github.com/unraid/bootable-unraid-installer/releases/latest/download/unraid-installer-hetzner-rescue.sh \
+  -o /tmp/unraid-hetzner.sh && \
+sudo bash /tmp/unraid-hetzner.sh \
   --disk /dev/disk/by-id/nvme-<first-physical-id> \
   --disk /dev/disk/by-id/nvme-<second-physical-id>
 ```
+
+The released launcher is pinned to the same release as its ISO. It downloads
+the online ISO and SHA256 checksum, verifies the payload, and caches the ISO
+under `/root/unraid-installer-vm`. A repeat run reuses the cached ISO only
+when its SHA256 still matches. Use `--iso PATH` for an offline or development
+ISO, or `--release-tag Installer-<version>` with a launcher copied directly
+from the source tree.
 
 The helper:
 

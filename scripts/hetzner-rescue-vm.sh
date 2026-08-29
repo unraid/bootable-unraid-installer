@@ -5,6 +5,9 @@
 set -euo pipefail
 
 ISO=""
+RELEASE_TAG=""
+PUBLISHED_RELEASE_TAG=""
+RELEASE_REPOSITORY="${UNRAID_INSTALLER_RELEASE_REPOSITORY:-unraid/bootable-unraid-installer}"
 STATE_DIR="/root/unraid-installer-vm"
 RAM_MIB="8192"
 VCPUS="4"
@@ -14,13 +17,14 @@ DISKS=()
 usage() {
     cat <<'EOF'
 Usage:
-  hetzner-rescue-vm.sh --iso PATH --disk DEVICE [--disk DEVICE] [options]
+  hetzner-rescue-vm.sh --disk DEVICE [--disk DEVICE] [options]
 
 Required:
-  --iso PATH          Official Unraid Installer ISO
   --disk DEVICE       Physical whole disk; repeat for a two-disk mirror
 
 Options:
+  --iso PATH          Use a local installer ISO instead of downloading one
+  --release-tag TAG   Download the online ISO from this Installer-* release
   --state-dir PATH    VM state directory (default: /root/unraid-installer-vm)
   --ram MIB           Guest memory in MiB (default: 8192)
   --cpus COUNT        Guest vCPU count (default: 4)
@@ -37,6 +41,11 @@ while (($#)); do
         --iso)
             [[ $# -ge 2 ]] || { echo "Missing value for --iso" >&2; exit 2; }
             ISO="$2"
+            shift 2
+            ;;
+        --release-tag)
+            [[ $# -ge 2 ]] || { echo "Missing value for --release-tag" >&2; exit 2; }
+            RELEASE_TAG="$2"
             shift 2
             ;;
         --disk)
@@ -77,7 +86,10 @@ while (($#)); do
 done
 
 [[ $(id -u) -eq 0 ]] || { echo "Run this helper as root in Hetzner Rescue." >&2; exit 1; }
-[[ -f "$ISO" && -r "$ISO" ]] || { echo "Installer ISO is not readable: $ISO" >&2; exit 1; }
+if [[ -n "$ISO" && -n "$RELEASE_TAG" ]]; then
+    echo "Use either --iso or --release-tag, not both." >&2
+    exit 2
+fi
 [[ ${#DISKS[@]} -ge 1 && ${#DISKS[@]} -le 2 ]] || {
     echo "Provide one or two --disk arguments." >&2
     exit 1
@@ -93,6 +105,92 @@ fi
 [[ "$VNC_DISPLAY" =~ ^[0-9]+$ ]] || {
     echo "--vnc-display must be a non-negative integer." >&2
     exit 1
+}
+
+download_file() {
+    local url="$1" destination="$2"
+    if command -v curl >/dev/null 2>&1; then
+        curl --fail --location --retry 3 --connect-timeout 15 \
+            --output "$destination" "$url"
+    elif command -v wget >/dev/null 2>&1; then
+        wget --tries=3 --timeout=15 --output-document="$destination" "$url"
+    else
+        echo "curl or wget is required to download the installer." >&2
+        return 1
+    fi
+}
+
+file_sha256() {
+    sha256sum "$1" | awk '{print tolower($1)}'
+}
+
+resolve_iso() {
+    local tag version asset base_url checksum_url checksum_file expected actual partial
+
+    if [[ -n "$ISO" ]]; then
+        [[ -f "$ISO" && -r "$ISO" ]] || {
+            echo "Installer ISO is not readable: $ISO" >&2
+            return 1
+        }
+        ISO="$(readlink -f "$ISO")"
+        return 0
+    fi
+
+    tag="$RELEASE_TAG"
+    if [[ -z "$tag" && -n "$PUBLISHED_RELEASE_TAG" ]]; then
+        tag="$PUBLISHED_RELEASE_TAG"
+    fi
+    if [[ ! "$tag" =~ ^Installer-[[:alnum:]._-]+$ ]]; then
+        echo "This development launcher is not pinned to a release." >&2
+        echo "Pass --release-tag Installer-<version> or provide --iso PATH." >&2
+        return 1
+    fi
+
+    command -v sha256sum >/dev/null 2>&1 || {
+        echo "sha256sum is required to verify the installer download." >&2
+        return 1
+    }
+
+    version="${tag#Installer-}"
+    asset="unraid-installer-${version}-online.iso"
+    base_url="https://github.com/${RELEASE_REPOSITORY}/releases/download/${tag}"
+    checksum_url="${base_url}/${asset}.sha256"
+    ISO="${STATE_DIR}/${asset}"
+    checksum_file="${ISO}.sha256.download"
+    partial="${ISO}.part"
+
+    mkdir -p "$STATE_DIR"
+    rm -f "$checksum_file" "$partial"
+    echo "Downloading checksum for ${tag}..."
+    download_file "$checksum_url" "$checksum_file"
+    expected="$(awk 'NR == 1 {print tolower($1)}' "$checksum_file")"
+    rm -f "$checksum_file"
+    if [[ ! "$expected" =~ ^[0-9a-f]{64}$ ]]; then
+        echo "Release checksum is invalid: $checksum_url" >&2
+        return 1
+    fi
+
+    if [[ -s "$ISO" ]]; then
+        actual="$(file_sha256 "$ISO")"
+        if [[ "$actual" == "$expected" ]]; then
+            echo "Using verified cached installer: $ISO"
+            return 0
+        fi
+        echo "Cached installer checksum does not match; downloading it again."
+    fi
+
+    echo "Downloading ${asset}..."
+    download_file "${base_url}/${asset}" "$partial"
+    actual="$(file_sha256 "$partial")"
+    if [[ "$actual" != "$expected" ]]; then
+        rm -f "$partial"
+        echo "Installer checksum verification failed." >&2
+        echo "Expected: $expected" >&2
+        echo "Actual:   $actual" >&2
+        return 1
+    fi
+    mv "$partial" "$ISO"
+    echo "Verified installer SHA256: $actual"
 }
 
 command -v qemu-system-x86_64 >/dev/null 2>&1 || {
@@ -234,6 +332,8 @@ if [[ -s "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
     echo "A VM recorded in $PID_FILE is already running." >&2
     exit 1
 fi
+
+resolve_iso
 
 OVMF_VARS="$STATE_DIR/OVMF_VARS.fd"
 MONITOR_SOCKET="$STATE_DIR/monitor.sock"

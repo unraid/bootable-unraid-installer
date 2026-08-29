@@ -118,6 +118,10 @@ jobs:
           fi
 
           release_version="${release_tag#Installer-}"
+          if [[ ! "$release_tag" =~ ^Installer-[[:alnum:]._-]+$ ]]; then
+            echo "Error: release tag must match Installer-<version>: '$release_tag'" >&2
+            exit 1
+          fi
           release_version="$(tr -cs '[:alnum:]._' '-' <<< "$release_version" | sed 's/^-//; s/-$//')"
           if [[ -z "$release_version" ]]; then
             echo "Error: sanitized release version is empty for release tag '$release_tag'" >&2
@@ -148,6 +152,15 @@ jobs:
           merge-multiple: true
           path: release-assets
 
+      - name: Download Hetzner Rescue launcher from source run
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.run-id.outputs.run_id }}
+          pattern: install-user-hetzner-launcher-*
+          merge-multiple: true
+          path: release-assets
+
       - name: Validate downloaded release assets
         shell: bash
         run: |
@@ -156,6 +169,7 @@ jobs:
           required_files=(
             release-assets/install-user.iso
             release-assets/install-user-minimal.img
+            release-assets/hetzner-rescue-vm.sh
           )
 
           for file in "${required_files[@]}"; do
@@ -174,27 +188,43 @@ jobs:
 
           iso_asset="unraid-installer-${RELEASE_VERSION}-online.iso"
           img_asset="unraid-installer-${RELEASE_VERSION}-online.img.zip"
+          launcher_asset="unraid-installer-hetzner-rescue.sh"
 
           mv release-assets/install-user.iso "release-assets/${iso_asset}"
+          mv release-assets/hetzner-rescue-vm.sh "release-assets/${launcher_asset}"
+          sed -i \
+            's/^PUBLISHED_RELEASE_TAG=""$/PUBLISHED_RELEASE_TAG="${{ steps.meta.outputs.release_tag }}"/' \
+            "release-assets/${launcher_asset}"
+          if ! grep -qx 'PUBLISHED_RELEASE_TAG="${{ steps.meta.outputs.release_tag }}"' \
+            "release-assets/${launcher_asset}"; then
+            echo "Failed to pin the Hetzner launcher to the release tag." >&2
+            exit 1
+          fi
+          chmod 0755 "release-assets/${launcher_asset}"
 
           echo "Compressing online installer image as ${img_asset}..."
           zip -9 -j "release-assets/${img_asset}" release-assets/install-user-minimal.img
           rm -f release-assets/install-user-minimal.img
 
           echo "Compressed sizes:"
-          ls -lh "release-assets/${iso_asset}" "release-assets/${img_asset}"
+          ls -lh "release-assets/${iso_asset}" "release-assets/${img_asset}" \
+            "release-assets/${launcher_asset}"
 
-      - name: Generate per-file MD5 checksums
+      - name: Generate per-file checksums
         shell: bash
         run: |
           set -euo pipefail
           shopt -s nullglob
 
-          for asset in release-assets/unraid-installer-*.iso release-assets/unraid-installer-*.img.zip; do
+          for asset in \
+            release-assets/unraid-installer-*.iso \
+            release-assets/unraid-installer-*.img.zip \
+            release-assets/unraid-installer-hetzner-rescue.sh; do
             md5sum "$asset" | awk '{print $1}' > "${asset}.md5"
+            sha256sum "$asset" | awk '{print $1}' > "${asset}.sha256"
           done
 
-          ls -lh release-assets/*.md5
+          ls -lh release-assets/*.md5 release-assets/*.sha256
 
       - name: Create or update GitHub release
         # softprops/action-gh-release v2, pinned to the tag target. Refresh with:
@@ -211,6 +241,9 @@ jobs:
             release-assets/unraid-installer-*.img.zip
             release-assets/unraid-installer-*.iso.md5
             release-assets/unraid-installer-*.img.zip.md5
+            release-assets/unraid-installer-hetzner-rescue.sh
+            release-assets/unraid-installer-hetzner-rescue.sh.md5
+            release-assets/unraid-installer-*.sha256
           generate_release_notes: false
 
       - name: Update release download options
