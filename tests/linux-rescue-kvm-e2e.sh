@@ -351,8 +351,11 @@ refresh_ci_nbd_disks() {
     for index in "${!CI_NBD_DISKS[@]}"; do
         disk="${CI_NBD_DISKS[$index]}"
         image="$STATE_DIR/ci-storage/target-$((index + 1)).raw"
-        qemu-nbd --connect="$disk" --format=raw "$image"
-        udevadm trigger --action=change --sysname-match="${disk##*/}"
+        if ! qemu-nbd --connect="$disk" --format=raw "$image"; then
+            echo "Unable to reopen $image on $disk for host verification." >&2
+            exit 1
+        fi
+        echo "Reopened $image on $disk for host verification."
     done
     udevadm settle
 }
