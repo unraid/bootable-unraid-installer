@@ -490,7 +490,9 @@ verify_test() {
 
     for disk in "${DISKS[@]}"; do
         blockdev --flushbufs "$disk"
-        partprobe "$disk"
+        if [[ "$ACTION" != "ci" ]]; then
+            partprobe "$disk"
+        fi
     done
     udevadm settle
 
