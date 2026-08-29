@@ -22,6 +22,10 @@ fi
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1090,SC1091
+. "$SCRIPT_DIR/disk_identity.sh"
+
 UI_MODE="${UI_MODE:-text}"
 ui_backend="text"
 TARGET_DISK_ARG_1=""
@@ -579,85 +583,6 @@ prompt_size_for_small_disk() {
     done
 }
 
-resolve_disk_id() {
-    local disk="$1"
-    local id=""
-    local link resolved
-    local transport=""
-    local model=""
-    local short_serial=""
-
-    sanitize_disk_id() {
-        local raw="$1"
-
-        # Keep USB IDs exactly as discovered.
-        if [[ "$transport" == "usb" ]]; then
-            printf '%s\n' "$raw"
-            return 0
-        fi
-
-        printf '%s\n' "$raw" | sed -E 's/[[:space:]]+/_/g; s/[^[:alnum:]_.-]/_/g; s/^_+//; s/_+$//'
-    }
-
-    transport="$(lsblk -dn -o TRAN "$disk" 2>/dev/null | tr '[:upper:]' '[:lower:]' | head -n1 || true)"
-    if [[ "$transport" != "usb" ]]; then
-        model="$(lsblk -dn -o MODEL "$disk" 2>/dev/null | head -n1 || true)"
-        model="${model//\\x20/ }"
-        model="$(sanitize_disk_id "$model")"
-
-        if command -v udevadm >/dev/null 2>&1; then
-            short_serial="$(udevadm info --query=property --name "$disk" 2>/dev/null | awk -F= '/^ID_SERIAL_SHORT=/{print $2; exit}')"
-        fi
-        if [[ -z "$short_serial" ]]; then
-            short_serial="$(lsblk -dn -o SERIAL "$disk" 2>/dev/null | head -n1 || true)"
-        fi
-        short_serial="${short_serial//\\x20/ }"
-        short_serial="$(sanitize_disk_id "$short_serial")"
-
-        if [[ -n "$model" && -n "$short_serial" ]]; then
-            id="${model}_${short_serial}"
-            id="$(sanitize_disk_id "$id")"
-            printf '%s\n' "$id"
-            return 0
-        fi
-    fi
-
-    if command -v udevadm >/dev/null 2>&1; then
-        id="$(udevadm info --query=property --name "$disk" 2>/dev/null | awk -F= '/^ID_SERIAL=/{print $2; exit}')"
-        if [[ -n "$id" ]]; then
-            id="$(sanitize_disk_id "$id")"
-            printf '%s\n' "$id"
-            return 0
-        fi
-        id="$(udevadm info --query=property --name "$disk" 2>/dev/null | awk -F= '/^ID_WWN=/{print $2; exit}')"
-        if [[ -n "$id" ]]; then
-            id="$(sanitize_disk_id "$id")"
-            printf '%s\n' "$id"
-            return 0
-        fi
-    fi
-
-    for link in /dev/disk/by-id/*; do
-        [[ -e "$link" ]] || continue
-        resolved="$(readlink -f "$link" 2>/dev/null || true)"
-        if [[ "$resolved" == "$disk" ]]; then
-            id="$(basename "$link")"
-            id="$(sanitize_disk_id "$id")"
-            printf '%s\n' "$id"
-            return 0
-        fi
-    done
-
-    id="$(lsblk -dn -o WWN,SERIAL "$disk" 2>/dev/null | awk '{print $1; exit}' || true)"
-    id="$(sanitize_disk_id "$id")"
-    if [[ -n "$id" && "$id" != "-" ]]; then
-        printf '%s\n' "$id"
-        return 0
-    fi
-
-    return 1
-}
-
 detect_onboarding_boot_disk() {
     local boot_part=""
     local boot_disk=""
@@ -989,6 +914,34 @@ else
     [[ "$CONFIRM" != "YES" ]] && { echo "Aborted."; exit 1; }
 fi
 
+# Capture the canonical hardware identity before changing the partition table.
+# An eMMC device must not fall back to its kernel name or serial-only ID.
+if command -v udevadm >/dev/null 2>&1; then
+    run_operation udevadm settle --timeout=10 || true
+fi
+DISK_ID="$(resolve_disk_id "$TARGET" || true)"
+if [[ -z "$DISK_ID" ]]; then
+    if is_mmc_disk_name "$TARGET_DISK"; then
+        error_msg "ERROR: unable to resolve the canonical eMMC identity for $TARGET. Refusing to write a serial-only Boot Pool identifier."
+        exit 1
+    fi
+    DISK_ID="$TARGET_DISK"
+    log_msg "WARNING: could not resolve stable disk ID for $TARGET; using '$DISK_ID'."
+fi
+log_msg "Using DISK_ID: $DISK_ID"
+if (( BOOT_DEVICE_COUNT == 2 )); then
+    DISK_ID_2="$(resolve_disk_id "$TARGET_2" || true)"
+    if [[ -z "$DISK_ID_2" ]]; then
+        if is_mmc_disk_name "$TARGET_DISK_2"; then
+            error_msg "ERROR: unable to resolve the canonical eMMC identity for $TARGET_2. Refusing to write a serial-only Boot Pool identifier."
+            exit 1
+        fi
+        DISK_ID_2="$TARGET_DISK_2"
+        log_msg "WARNING: could not resolve stable disk ID for $TARGET_2; using '$DISK_ID_2'."
+    fi
+    log_msg "Using DISK_ID.1: $DISK_ID_2"
+fi
+
 step_update "Preparing partition layout"
 
 # -------------------------------
@@ -1009,20 +962,6 @@ fi
 
 step_update "Creating bootable target partitions"
 run_operation mkdir -p "/boot-transfer"
-DISK_ID="$(resolve_disk_id "$TARGET" || true)"
-if [[ -z "$DISK_ID" ]]; then
-    DISK_ID="$TARGET_DISK"
-    log_msg "WARNING: could not resolve stable disk ID for $TARGET; using '$DISK_ID'."
-fi
-log_msg "Using DISK_ID: $DISK_ID"
-if (( BOOT_DEVICE_COUNT == 2 )); then
-    DISK_ID_2="$(resolve_disk_id "$TARGET_2" || true)"
-    if [[ -z "$DISK_ID_2" ]]; then
-        DISK_ID_2="$TARGET_DISK_2"
-        log_msg "WARNING: could not resolve stable disk ID for $TARGET_2; using '$DISK_ID_2'."
-    fi
-    log_msg "Using DISK_ID.1: $DISK_ID_2"
-fi
 if (( BOOT_DEVICE_COUNT == 2 )); then
     run_operation /usr/local/ungrub/mkbootable add "$TARGET_DISK" "$SIZE"
     run_operation /usr/local/ungrub/mkbootable add "$TARGET_DISK_2" "$SIZE"
