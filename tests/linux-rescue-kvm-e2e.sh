@@ -383,14 +383,18 @@ refresh_ci_nbd_disks() {
         part2="$(partition_path "$disk" 2)"
         part3="$(partition_path "$disk" 3)"
         part4="$(partition_path "$disk" 4)"
-        for _ in {1..50}; do
+        for _ in {1..200}; do
             [[ -b "$part2" && -b "$part3" && -b "$part4" ]] && break
-            partx --add "$disk" >/dev/null 2>&1 || true
-            udevadm settle
+            blockdev --rereadpt "$disk" >/dev/null 2>&1 || true
+            partprobe "$disk" >/dev/null 2>&1 || true
+            partx --update "$disk" >/dev/null 2>&1 || partx --add "$disk" >/dev/null 2>&1 || true
+            udevadm settle --timeout=2 >/dev/null 2>&1 || true
             sleep 0.1
         done
         [[ -b "$part2" && -b "$part3" && -b "$part4" ]] || {
             echo "Partition devices did not appear after reopening $disk." >&2
+            lsblk -o NAME,PATH,SIZE,TYPE,FSTYPE,PARTLABEL "$disk" >&2 || true
+            partx --show "$disk" >&2 || true
             exit 1
         }
     done
