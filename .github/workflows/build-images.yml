@@ -91,9 +91,7 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: zfs-live-build
-          key: install-build-v4-${{ runner.os }}-${{ hashFiles('build/version-lock.json', 'scripts/config', 'scripts/build-kernel-zfs-cache.sh') }}-run-${{ github.run_id }}
-          restore-keys: |
-            install-build-v4-${{ runner.os }}-${{ hashFiles('build/version-lock.json', 'scripts/config', 'scripts/build-kernel-zfs-cache.sh') }}-
+          key: install-build-v5-${{ runner.os }}-${{ hashFiles('build/version-lock.json', 'scripts/config', 'scripts/build-kernel-zfs-cache.sh') }}
 
       - name: Sanitize restored build cache
         shell: bash
@@ -261,6 +259,43 @@ jobs:
 
             sha256sum "$artifact" >> artifacts/checksums.sha256
           done
+
+      - name: Validate reusable build cache
+        if: ${{ success() && steps.restore-build-cache.outputs.cache-hit != 'true' }}
+        id: cache-complete
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          kernel_stamp_count="$(find zfs-live-build -maxdepth 1 -type f -name '.*kernel-build-*.stamp' | wc -l | tr -d '[:space:]')"
+          zfs_stamp_count="$(find zfs-live-build -maxdepth 1 -type f -name '.*zfs-build-*.stamp' | wc -l | tr -d '[:space:]')"
+
+          echo "kernel_stamp_count=$kernel_stamp_count"
+          echo "zfs_stamp_count=$zfs_stamp_count"
+
+          if [[ "$kernel_stamp_count" != "0" && "$zfs_stamp_count" != "0" ]]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping cache save because kernel or OpenZFS build stamps are missing."
+          fi
+
+      - name: Prune generated images and rootfs from build cache
+        if: ${{ success() && steps.cache-complete.outputs.ready == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          find zfs-live-build -maxdepth 1 -type f \( -name 'install-*.iso' -o -name 'install-*.img' \) -delete
+          if [[ -d zfs-live-build/rootfs ]]; then
+            sudo rm -rf zfs-live-build/rootfs
+          fi
+
+      - name: Save reusable kernel and OpenZFS build cache
+        if: ${{ success() && steps.cache-complete.outputs.ready == 'true' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: zfs-live-build
+          key: install-build-v5-${{ runner.os }}-${{ hashFiles('build/version-lock.json', 'scripts/config', 'scripts/build-kernel-zfs-cache.sh') }}
 
       - name: Commit published outputs to repository
         if: ${{ success() && inputs.publish }}
