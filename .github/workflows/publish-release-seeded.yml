@@ -190,13 +190,38 @@ jobs:
           done
           ls -lh release-assets/*.md5 release-assets/*.sha256
 
+      - name: Create exact release tag
+        id: release-tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.meta.outputs.release_tag }}
+          SOURCE_HEAD_SHA: ${{ steps.run-id.outputs.source_head_sha }}
+        run: |
+          set -euo pipefail
+
+          existing_sha="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" \
+            --jq='.object.sha' 2>/dev/null || true)"
+          if [[ -n "$existing_sha" ]]; then
+            [[ "$existing_sha" == "$SOURCE_HEAD_SHA" ]] || {
+              echo "Release tag already points to $existing_sha, expected $SOURCE_HEAD_SHA" >&2
+              exit 1
+            }
+            echo "created=false" >> "$GITHUB_OUTPUT"
+          else
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f ref="refs/tags/${RELEASE_TAG}" \
+              -f sha="$SOURCE_HEAD_SHA" >/dev/null
+            echo "created=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Create or update GitHub release
         # softprops/action-gh-release v2, pinned to the tag target. Refresh with:
         # git ls-remote https://github.com/softprops/action-gh-release.git refs/tags/v2
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         with:
           tag_name: ${{ steps.meta.outputs.release_tag }}
-          target_commitish: ${{ steps.run-id.outputs.source_head_sha }}
           name: ${{ steps.meta.outputs.release_name }}
           draft: ${{ inputs.draft }}
           prerelease: ${{ inputs.prerelease }}
@@ -218,3 +243,13 @@ jobs:
           ./scripts/update-release-download-options.sh \
             --release-tag "$RELEASE_TAG" \
             --release-version "$RELEASE_VERSION"
+
+      - name: Remove incomplete new release
+        if: ${{ failure() && steps.release-tag.outputs.created == 'true' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.meta.outputs.release_tag }}
+        run: |
+          gh release delete "$RELEASE_TAG" --yes --cleanup-tag || \
+            gh api --method DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/${RELEASE_TAG}"
