@@ -25,9 +25,10 @@ The test host needs:
 The normal pull-request workflow also runs this test on a GitHub-hosted Ubuntu
 runner. CI creates two 36 GiB sparse files behind temporary NBD devices, gives
 them deterministic host identities through udev, and attaches a read-only
-persistence seed to the VM. The seed invokes the same internal-boot script with
-a 16,384 MiB mirrored pool. After QEMU powers off, the ordinary verifier checks
-the resulting disks and CI removes every temporary block device and image.
+ISO9660 persistence seed to the VM. The seed invokes the same internal-boot
+script with a 16,384 MiB mirrored pool. After QEMU powers off, the ordinary
+verifier checks the resulting disks and CI removes every temporary block device
+and image.
 
 The unattended `ci` action is limited to ephemeral runners and disks it creates
 itself. The normal `launch` action remains interactive and still requires the

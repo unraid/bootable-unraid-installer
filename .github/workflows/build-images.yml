@@ -459,6 +459,7 @@ jobs:
             parted \
             qemu-system-x86 \
             qemu-utils \
+            xorriso \
             zfsutils-linux
 
       - name: Require hardware virtualization
@@ -500,6 +501,14 @@ jobs:
             --cpus 2
 
       - name: Upload KVM E2E evidence
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          sudo chmod a+rx "$RUNNER_TEMP/unraid-installer-e2e" 2>/dev/null || true
+          sudo find "$RUNNER_TEMP/unraid-installer-e2e" -maxdepth 1 -type f \
+            -exec chmod a+r {} + 2>/dev/null || true
+
+      - name: Archive KVM E2E evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

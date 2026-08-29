@@ -19,6 +19,7 @@ VERIFY_POOL_IMPORTED=0
 VERIFY_TEMP_DIR=""
 CI_NBD_DISKS=()
 CI_UDEV_RULE=""
+CI_TAIL_PID=""
 
 usage() {
     cat <<'USAGE'
@@ -251,6 +252,10 @@ EOF
 cleanup_ci() {
     local pid="" disk
 
+    if [[ -n "$CI_TAIL_PID" ]]; then
+        kill "$CI_TAIL_PID" 2>/dev/null || true
+        wait "$CI_TAIL_PID" 2>/dev/null || true
+    fi
     pid="$(cat "$STATE_DIR/qemu.pid" 2>/dev/null || true)"
     if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
         if [[ -S "$STATE_DIR/monitor.sock" ]] && command -v nc >/dev/null 2>&1; then
@@ -281,16 +286,12 @@ cleanup_ci() {
 }
 
 create_ci_seed() {
-    local seed_mount="$STATE_DIR/seed-mount"
-    local seed_runtime="$seed_mount/runtime"
+    local seed_root="$STATE_DIR/ci-storage/seed-root"
+    local seed_runtime="$seed_root/runtime"
 
-    SEED_IMAGE="$STATE_DIR/ci-storage/installer-seed.ext4"
-    truncate -s 1600M "$SEED_IMAGE"
-    mkfs.ext4 -q -F -L INSTALL-PERSIST "$SEED_IMAGE"
-    mkdir -p "$seed_mount"
-    mount -o loop "$SEED_IMAGE" "$seed_mount"
-    mkdir -p "$seed_runtime" "$seed_mount/zips"
-    cp "$UNRAID_ZIP" "$seed_mount/zips/"
+    SEED_IMAGE="$STATE_DIR/ci-storage/installer-seed.iso"
+    mkdir -p "$seed_runtime" "$seed_root/zips"
+    cp "$UNRAID_ZIP" "$seed_root/zips/"
     cat > "$seed_runtime/menu.sh" <<'EOF'
 #!/bin/bash
 set -uo pipefail
@@ -313,7 +314,8 @@ poweroff -f
 EOF
     chmod 0755 "$seed_runtime/menu.sh"
     sync
-    umount "$seed_mount"
+    xorriso -as mkisofs -quiet -V INSTALL-PERSIST -o "$SEED_IMAGE" "$seed_root"
+    rm -rf "$seed_root"
 }
 
 create_ci_nbd_disk() {
@@ -343,7 +345,7 @@ run_ci_test() {
     [[ -n "$ISO" && -f "$ISO" ]] || { echo "ci requires --iso PATH." >&2; exit 1; }
     [[ -n "$UNRAID_ZIP" && -f "$UNRAID_ZIP" ]] || { echo "ci requires --unraid-zip PATH." >&2; exit 1; }
     [[ -c /dev/kvm ]] || { echo "/dev/kvm is unavailable on this runner." >&2; exit 1; }
-    for command in truncate qemu-nbd modprobe mkfs.ext4 mount umount udevadm; do
+    for command in truncate qemu-nbd modprobe udevadm xorriso; do
         require_command "$command"
     done
 
@@ -369,6 +371,8 @@ run_ci_test() {
 
     UNRAID_RESCUE_E2E_CONFIRM=ERASE_DISPOSABLE_DISKS launch_test
     pid="$(cat "$STATE_DIR/qemu.pid")"
+    tail -n +1 -F "$STATE_DIR/serial.log" &
+    CI_TAIL_PID=$!
     deadline=$((SECONDS + 1200))
     while kill -0 "$pid" 2>/dev/null && (( SECONDS < deadline )); do
         sleep 2
@@ -378,6 +382,9 @@ run_ci_test() {
         tail -n 200 "$STATE_DIR/serial.log" >&2 || true
         exit 1
     fi
+    kill "$CI_TAIL_PID" 2>/dev/null || true
+    wait "$CI_TAIL_PID" 2>/dev/null || true
+    CI_TAIL_PID=""
     if ! grep -q '^UNRAID_E2E_RESULT=success$' "$STATE_DIR/serial.log"; then
         echo "The unattended installer did not report success." >&2
         tail -n 200 "$STATE_DIR/serial.log" >&2 || true
