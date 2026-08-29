@@ -561,9 +561,20 @@ verify_test() {
         echo "A pool named flash is already imported; refusing ambiguous verification." >&2
         exit 1
     fi
-    import_output="$(zpool import -d "${part3_paths[0]}" -d "${part3_paths[1]}")"
-    grep -q '^  pool: flash$' <<<"$import_output"
-    grep -q 'mirror-0.*ONLINE' <<<"$import_output"
+    if ! import_output="$(zpool import -d "${part3_paths[0]}" -d "${part3_paths[1]}")"; then
+        echo "Unable to inspect the installed flash pool." >&2
+        exit 1
+    fi
+    if ! grep -Eq '^[[:space:]]+pool: flash$' <<<"$import_output"; then
+        echo "The installed flash pool was not found in ZFS import output:" >&2
+        printf '%s\n' "$import_output" >&2
+        exit 1
+    fi
+    if ! grep -Eq '^[[:space:]]+mirror-0[[:space:]]+ONLINE' <<<"$import_output"; then
+        echo "The installed flash pool is not an online mirror:" >&2
+        printf '%s\n' "$import_output" >&2
+        exit 1
+    fi
 
     zpool import -N -o readonly=on -o cachefile=none -R "$import_root" \
         -d "${part3_paths[0]}" -d "${part3_paths[1]}" flash
