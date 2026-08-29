@@ -14,6 +14,7 @@ RAM_MIB="8192"
 VCPUS="4"
 VNC_DISPLAY="1"
 NETWORK_BRIDGE=""
+SEED_IMAGE=""
 DISKS=()
 
 usage() {
@@ -32,6 +33,7 @@ Options:
   --vnc-display N     Localhost VNC display (default: 1, TCP port 5901)
   --bridge INTERFACE  Attach the guest NIC to this existing Linux bridge when
                       QEMU user networking and passt are unavailable
+  --seed-image PATH   Attach a read-only installer persistence seed (advanced)
   --help              Show this help
 
 This helper only boots the installer. Power the VM off after installation;
@@ -81,6 +83,11 @@ while (($#)); do
             NETWORK_BRIDGE="$2"
             shift 2
             ;;
+        --seed-image)
+            [[ $# -ge 2 ]] || { echo "Missing value for --seed-image" >&2; exit 2; }
+            SEED_IMAGE="$2"
+            shift 2
+            ;;
         --help|-h)
             usage
             exit 0
@@ -97,6 +104,13 @@ done
 if [[ -n "$ISO" && -n "$RELEASE_TAG" ]]; then
     echo "Use either --iso or --release-tag, not both." >&2
     exit 2
+fi
+if [[ -n "$SEED_IMAGE" ]]; then
+    [[ -f "$SEED_IMAGE" && -r "$SEED_IMAGE" ]] || {
+        echo "Installer persistence seed is not readable: $SEED_IMAGE" >&2
+        exit 1
+    }
+    SEED_IMAGE="$(readlink -f "$SEED_IMAGE")"
 fi
 [[ ${#DISKS[@]} -le 2 ]] || {
     echo "Provide no more than two --disk arguments." >&2
@@ -555,6 +569,13 @@ QEMU_ARGS=(
     -daemonize
 )
 QEMU_ARGS+=("${NETWORK_ARGS[@]}")
+
+if [[ -n "$SEED_IMAGE" ]]; then
+    QEMU_ARGS+=(
+        -drive "file=$SEED_IMAGE,format=raw,if=none,readonly=on,id=installer-seed"
+        -device "virtio-blk-pci,drive=installer-seed,serial=UNRAID_INSTALLER_SEED"
+    )
+fi
 
 for index in "${!REAL_DISKS[@]}"; do
     pci_address=$((3 + index))

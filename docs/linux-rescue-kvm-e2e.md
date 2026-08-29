@@ -22,9 +22,29 @@ The test host needs:
 - `zpool`, `zfs`, `mtools`, `gdisk`, `util-linux`, and `parted` for post-install
   verification.
 
-The harness is intentionally not part of ordinary GitHub-hosted CI. It needs
-KVM, raw disposable disks, and an operator-visible destructive confirmation.
-The shell itself is covered by the normal ShellCheck workflow.
+The normal pull-request workflow also runs this test on a GitHub-hosted Ubuntu
+runner. CI creates two 36 GiB sparse files behind temporary NBD devices, gives
+them deterministic host identities through udev, and attaches a read-only
+persistence seed to the VM. The seed invokes the same internal-boot script with
+a 16,384 MiB mirrored pool. After QEMU powers off, the ordinary verifier checks
+the resulting disks and CI removes every temporary block device and image.
+
+The unattended `ci` action is limited to ephemeral runners and disks it creates
+itself. The normal `launch` action remains interactive and still requires the
+explicit destructive confirmation token.
+
+To reproduce the automated path on a disposable Linux KVM host:
+
+```bash
+sudo tests/linux-rescue-kvm-e2e.sh ci \
+  --iso /root/install-user.iso \
+  --unraid-zip /root/unRAIDServer-7.3.2-x86_64.zip \
+  --state-dir /tmp/unraid-installer-e2e
+```
+
+The GitHub job uploads its serial log, physical identity map, and generated
+fallback command as short-lived evidence. It does not upload the large sparse
+disk files.
 
 ## Launch
 

@@ -36,8 +36,8 @@ Start here, then use the detailed guides below:
      without persisting virtual disk identities. Hetzner is the first validated
      provider.
 5. `docs/linux-rescue-kvm-e2e.md`
-   - Reusable destructive KVM test procedure for disposable Linux hosts, with
-     post-install ZFS, EFI, and physical-identity verification.
+   - Reusable KVM test procedure for disposable Linux hosts and GitHub-hosted
+     CI, with post-install ZFS, EFI, and physical-identity verification.
 
 The Rescue-side entry point for that workflow is
 `scripts/linux-rescue-vm.sh`.

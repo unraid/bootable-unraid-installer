@@ -11,10 +11,14 @@ VCPUS="4"
 VNC_DISPLAY="1"
 NETWORK_BRIDGE=""
 ISO=""
+SEED_IMAGE=""
+UNRAID_ZIP=""
 DISKS=()
 ACTION="${1:-}"
 VERIFY_POOL_IMPORTED=0
 VERIFY_TEMP_DIR=""
+CI_NBD_DISKS=()
+CI_UDEV_RULE=""
 
 usage() {
     cat <<'USAGE'
@@ -23,12 +27,15 @@ Usage:
     tests/linux-rescue-kvm-e2e.sh launch --iso PATH --disk DEVICE --disk DEVICE [options]
   sudo tests/linux-rescue-kvm-e2e.sh stop [--state-dir DIR]
   sudo tests/linux-rescue-kvm-e2e.sh verify [--disk DEVICE --disk DEVICE] [--state-dir DIR]
+  sudo tests/linux-rescue-kvm-e2e.sh ci --iso PATH --unraid-zip PATH [options]
 
 Actions:
   launch   Start the installer VM with exactly two disposable whole disks.
   stop     Stop the test VM through its QEMU monitor, then flush both disks.
   verify   Read-only validation of partitions, the mirrored flash pool, EFI
            loaders, and persisted host-visible disk identities.
+  ci       Create disposable sparse disks, run the install unattended, verify
+           it, and clean up. This action is intended for ephemeral CI runners.
 
 Options:
   --iso PATH          Installer ISO to boot (required by launch)
@@ -39,6 +46,8 @@ Options:
   --cpus COUNT        Installer guest vCPUs (default: 4)
   --vnc-display N     Localhost VNC display (default: 1)
   --bridge INTERFACE  Existing Linux bridge for hosts without user/passt networking
+  --seed-image PATH   Read-only installer persistence seed passed to the launcher
+  --unraid-zip PATH   Verified Unraid OS ZIP used to build the ci action seed
   --help              Show this help
 
 This harness is destructive. Use only disks supplied by a disposable test
@@ -93,6 +102,16 @@ while (($#)); do
         --bridge)
             [[ $# -ge 2 ]] || { echo "Missing value for --bridge" >&2; exit 2; }
             NETWORK_BRIDGE="$2"
+            shift 2
+            ;;
+        --seed-image)
+            [[ $# -ge 2 ]] || { echo "Missing value for --seed-image" >&2; exit 2; }
+            SEED_IMAGE="$2"
+            shift 2
+            ;;
+        --unraid-zip)
+            [[ $# -ge 2 ]] || { echo "Missing value for --unraid-zip" >&2; exit 2; }
+            UNRAID_ZIP="$2"
             shift 2
             ;;
         --help|-h)
@@ -202,6 +221,9 @@ launch_test() {
     if [[ -n "$NETWORK_BRIDGE" ]]; then
         launcher_args+=(--bridge "$NETWORK_BRIDGE")
     fi
+    if [[ -n "$SEED_IMAGE" ]]; then
+        launcher_args+=(--seed-image "$SEED_IMAGE")
+    fi
     for disk in "${DISKS[@]}"; do
         launcher_args+=(--disk "$disk")
     done
@@ -224,6 +246,144 @@ Then run:
   sudo $0 stop --state-dir '$STATE_DIR'
   sudo $0 verify --state-dir '$STATE_DIR'
 EOF
+}
+
+cleanup_ci() {
+    local pid="" disk
+
+    pid="$(cat "$STATE_DIR/qemu.pid" 2>/dev/null || true)"
+    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+        if [[ -S "$STATE_DIR/monitor.sock" ]] && command -v nc >/dev/null 2>&1; then
+            printf 'quit\n' | nc -U "$STATE_DIR/monitor.sock" >/dev/null 2>&1 || true
+        else
+            kill -TERM "$pid" 2>/dev/null || true
+        fi
+        wait_for_qemu_exit "$pid" || kill -KILL "$pid" 2>/dev/null || true
+    fi
+
+    if command -v zpool >/dev/null 2>&1 && zpool list -H -o name 2>/dev/null | grep -qx flash; then
+        zpool export flash 2>/dev/null || true
+    fi
+    for disk in "${CI_NBD_DISKS[@]}"; do
+        qemu-nbd --disconnect "$disk" >/dev/null 2>&1 || true
+    done
+    if [[ -n "$CI_UDEV_RULE" ]]; then
+        rm -f "$CI_UDEV_RULE"
+        udevadm control --reload-rules 2>/dev/null || true
+    fi
+    if mountpoint -q "$STATE_DIR/seed-mount" 2>/dev/null; then
+        umount "$STATE_DIR/seed-mount" 2>/dev/null || true
+    fi
+    rm -rf "$STATE_DIR/ci-storage" "$STATE_DIR/seed-mount"
+}
+
+create_ci_seed() {
+    local seed_mount="$STATE_DIR/seed-mount"
+    local seed_runtime="$seed_mount/runtime"
+
+    SEED_IMAGE="$STATE_DIR/ci-storage/installer-seed.ext4"
+    truncate -s 1600M "$SEED_IMAGE"
+    mkfs.ext4 -q -F -L INSTALL-PERSIST "$SEED_IMAGE"
+    mkdir -p "$seed_mount"
+    mount -o loop "$SEED_IMAGE" "$seed_mount"
+    mkdir -p "$seed_runtime" "$seed_mount/zips"
+    cp "$UNRAID_ZIP" "$seed_mount/zips/"
+    cat > "$seed_runtime/menu.sh" <<'EOF'
+#!/bin/bash
+set -uo pipefail
+
+exec >/dev/ttyS0 2>&1
+echo "UNRAID_E2E: starting unattended mirrored internal-boot installation"
+
+if printf '\nYES\n' | \
+    BOOT_POOL_NAME=boot MENU_BACKEND=text \
+    /bin/bash /boot/install/create_internal_boot.sh \
+        --ui text --size 16384 /dev/nvme0n1 /dev/nvme1n1; then
+    echo "UNRAID_E2E_RESULT=success"
+else
+    result=$?
+    echo "UNRAID_E2E_RESULT=failure exit=$result"
+fi
+
+sync
+poweroff -f
+EOF
+    chmod 0755 "$seed_runtime/menu.sh"
+    sync
+    umount "$seed_mount"
+}
+
+create_ci_nbd_disk() {
+    local image="$1" serial="$2" nbd_disk="" nbd_name candidate
+
+    truncate -s 36G "$image"
+    for candidate in /dev/nbd*; do
+        [[ "$candidate" =~ p[0-9]+$ ]] && continue
+        nbd_name="${candidate##*/}"
+        if [[ ! -s "/sys/class/block/$nbd_name/pid" ]]; then
+            nbd_disk="$candidate"
+            break
+        fi
+    done
+    [[ -n "$nbd_disk" ]] || { echo "No unused NBD device is available." >&2; exit 1; }
+    qemu-nbd --connect="$nbd_disk" --format=raw "$image"
+    udevadm settle
+    cat >> "$CI_UDEV_RULE" <<EOF
+KERNEL=="$nbd_name", ENV{ID_MODEL}="CI_DISK", ENV{ID_SERIAL_SHORT}="$serial", ENV{ID_SERIAL}="CI_DISK_$serial"
+EOF
+    CI_NBD_DISKS+=("$nbd_disk")
+}
+
+run_ci_test() {
+    local pid deadline
+
+    [[ -n "$ISO" && -f "$ISO" ]] || { echo "ci requires --iso PATH." >&2; exit 1; }
+    [[ -n "$UNRAID_ZIP" && -f "$UNRAID_ZIP" ]] || { echo "ci requires --unraid-zip PATH." >&2; exit 1; }
+    [[ -c /dev/kvm ]] || { echo "/dev/kvm is unavailable on this runner." >&2; exit 1; }
+    for command in truncate qemu-nbd modprobe mkfs.ext4 mount umount udevadm; do
+        require_command "$command"
+    done
+
+    mkdir -p "$STATE_DIR/ci-storage"
+    CI_UDEV_RULE="/run/udev/rules.d/99-unraid-installer-e2e-$$.rules"
+    : > "$CI_UDEV_RULE"
+    trap cleanup_ci EXIT
+
+    create_ci_seed
+    modprobe nbd max_part=16
+    create_ci_nbd_disk "$STATE_DIR/ci-storage/target-1.raw" E2E_PHYSICAL_01
+    create_ci_nbd_disk "$STATE_DIR/ci-storage/target-2.raw" E2E_PHYSICAL_02
+    udevadm control --reload-rules
+    for disk in "${CI_NBD_DISKS[@]}"; do
+        udevadm trigger --action=change --sysname-match="${disk##*/}"
+    done
+    udevadm settle
+    DISKS=("${CI_NBD_DISKS[@]}")
+
+    for disk in "${DISKS[@]}"; do
+        udevadm info --query=property --name="$disk" | grep -E '^(ID_MODEL|ID_SERIAL_SHORT|ID_SERIAL)='
+    done
+
+    UNRAID_RESCUE_E2E_CONFIRM=ERASE_DISPOSABLE_DISKS launch_test
+    pid="$(cat "$STATE_DIR/qemu.pid")"
+    deadline=$((SECONDS + 1200))
+    while kill -0 "$pid" 2>/dev/null && (( SECONDS < deadline )); do
+        sleep 2
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+        echo "Timed out waiting for the unattended installer VM." >&2
+        tail -n 200 "$STATE_DIR/serial.log" >&2 || true
+        exit 1
+    fi
+    if ! grep -q '^UNRAID_E2E_RESULT=success$' "$STATE_DIR/serial.log"; then
+        echo "The unattended installer did not report success." >&2
+        tail -n 200 "$STATE_DIR/serial.log" >&2 || true
+        exit 1
+    fi
+
+    stop_test
+    ( verify_test )
+    echo "GitHub-hosted Linux Rescue KVM E2E test passed."
 }
 
 stop_test() {
@@ -383,6 +543,7 @@ case "$ACTION" in
     launch) launch_test ;;
     stop) stop_test ;;
     verify) verify_test ;;
+    ci) run_ci_test ;;
     help|--help|-h) usage ;;
     *)
         echo "Unknown action: $ACTION" >&2

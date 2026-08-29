@@ -15,6 +15,7 @@ on:
     paths:
       - "build/**"
       - "scripts/**"
+      - "tests/**"
       - ".github/workflows/build-images.yml"
   push:
     branches:
@@ -22,6 +23,7 @@ on:
     paths:
       - "build/**"
       - "scripts/**"
+      - "tests/**"
       - ".github/workflows/build-images.yml"
   workflow_dispatch:
     inputs:
@@ -417,4 +419,94 @@ jobs:
           name: install-user-published-${{ github.run_number }}
           retention-days: ${{ env.ARTIFACT_RETENTION_DAYS }}
           path: artifacts/published/*
+          if-no-files-found: warn
+
+  linux-rescue-kvm-e2e:
+    name: Linux Rescue KVM E2E
+    needs: build-images
+    if: ${{ needs.build-images.result == 'success' && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ inputs.release_ref || github.sha }}
+          fetch-depth: 1
+
+      - name: Download installer ISO
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: install-user-iso-${{ github.run_number }}
+          path: artifacts/e2e
+
+      - name: Install KVM test dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            curl \
+            dosfstools \
+            gdisk \
+            jq \
+            mtools \
+            netcat-openbsd \
+            ovmf \
+            parted \
+            qemu-system-x86 \
+            qemu-utils \
+            zfsutils-linux
+
+      - name: Require hardware virtualization
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -c /dev/kvm ]]; then
+            echo "The GitHub-hosted runner does not expose /dev/kvm." >&2
+            exit 1
+          fi
+          sudo chmod 0666 /dev/kvm
+          ls -l /dev/kvm
+          qemu-system-x86_64 --version
+
+      - name: Download pinned Unraid OS payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="$(jq -er '.url' build/unraid-release-lock.json)"
+          filename="$(jq -er '.filename' build/unraid-release-lock.json)"
+          expected_sha256="$(jq -er '.sha256' build/unraid-release-lock.json)"
+          destination="artifacts/e2e/$filename"
+          curl --fail --location --retry 3 --connect-timeout 15 \
+            --output "$destination" "$url"
+          printf '%s  %s\n' "$expected_sha256" "$destination" | sha256sum --check --strict
+
+      - name: Install and verify on disposable KVM disks
+        shell: bash
+        run: |
+          set -euo pipefail
+          iso="$(find artifacts/e2e -maxdepth 1 -type f -name 'install-user.iso' -print -quit)"
+          unraid_zip="$(find artifacts/e2e -maxdepth 1 -type f -name 'unRAIDServer-*-x86_64.zip' -print -quit)"
+          [[ -n "$iso" && -n "$unraid_zip" ]]
+          sudo tests/linux-rescue-kvm-e2e.sh ci \
+            --iso "$iso" \
+            --unraid-zip "$unraid_zip" \
+            --state-dir "$RUNNER_TEMP/unraid-installer-e2e" \
+            --ram 4096 \
+            --cpus 2
+
+      - name: Upload KVM E2E evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: linux-rescue-kvm-e2e-${{ github.run_number }}
+          retention-days: 3
+          path: |
+            ${{ runner.temp }}/unraid-installer-e2e/serial.log
+            ${{ runner.temp }}/unraid-installer-e2e/disk-identities.tsv
+            ${{ runner.temp }}/unraid-installer-e2e/installer-command.txt
           if-no-files-found: warn
