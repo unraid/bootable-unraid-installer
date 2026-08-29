@@ -98,7 +98,19 @@ jobs:
             source_run_id="$db_id"
           fi
 
+          source_head_sha="$(gh run view "$source_run_id" --json headSha --jq='.headSha')"
+          source_conclusion="$(gh run view "$source_run_id" --json conclusion --jq='.conclusion')"
+          [[ "$source_head_sha" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "Source run did not provide a valid head SHA: $source_head_sha" >&2
+            exit 1
+          }
+          [[ "$source_conclusion" == "success" ]] || {
+            echo "Source run must have succeeded before release: $source_conclusion" >&2
+            exit 1
+          }
+
           echo "run_id=$source_run_id" >> "$GITHUB_OUTPUT"
+          echo "source_head_sha=$source_head_sha" >> "$GITHUB_OUTPUT"
         env:
           GH_TOKEN: ${{ github.token }}
 
@@ -184,6 +196,7 @@ jobs:
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         with:
           tag_name: ${{ steps.meta.outputs.release_tag }}
+          target_commitish: ${{ steps.run-id.outputs.source_head_sha }}
           name: ${{ steps.meta.outputs.release_name }}
           draft: ${{ inputs.draft }}
           prerelease: ${{ inputs.prerelease }}
