@@ -17,6 +17,7 @@ DISKS=()
 ACTION="${1:-}"
 VERIFY_POOL_IMPORTED=0
 VERIFY_TEMP_DIR=""
+VERIFY_MOUNT_DIRS=()
 CI_NBD_DISKS=()
 CI_UDEV_RULE=""
 CI_TAIL_PID=""
@@ -431,6 +432,14 @@ stop_test() {
 }
 
 cleanup_verify() {
+    local mount_dir
+
+    for mount_dir in "${VERIFY_MOUNT_DIRS[@]}"; do
+        if mountpoint -q "$mount_dir" 2>/dev/null; then
+            umount "$mount_dir" 2>/dev/null || true
+        fi
+    done
+    VERIFY_MOUNT_DIRS=()
     if (( VERIFY_POOL_IMPORTED == 1 )); then
         zpool export flash 2>/dev/null || true
         VERIFY_POOL_IMPORTED=0
@@ -445,9 +454,9 @@ verify_test() {
     local disk part2 part3 part4
     local part2_paths=() part3_paths=() part4_paths=()
     local pid identity_map expected_map actual_map
-    local import_root import_output status_output boot_mount pool_cfg
+    local import_root import_output status_output boot_mount pool_cfg esp0_mount esp1_mount
 
-    for command in readlink lsblk blockdev partprobe udevadm blkid mcopy sha256sum cmp zpool zfs awk sed sort grep find head wc xargs paste mktemp; do
+    for command in readlink lsblk blockdev partprobe udevadm blkid mount umount mountpoint sha256sum cmp zpool zfs awk sed sort grep find head wc xargs paste mktemp; do
         require_command "$command"
     done
     load_recorded_disks
@@ -501,9 +510,14 @@ verify_test() {
     mkdir -p "$import_root"
     trap cleanup_verify EXIT
 
-    mcopy -o -i "${part2_paths[0]}" ::/EFI/BOOT/BOOTX64.EFI "$VERIFY_TEMP_DIR/disk0-BOOTX64.EFI"
-    mcopy -o -i "${part2_paths[1]}" ::/EFI/BOOT/BOOTX64.EFI "$VERIFY_TEMP_DIR/disk1-BOOTX64.EFI"
-    cmp "$VERIFY_TEMP_DIR/disk0-BOOTX64.EFI" "$VERIFY_TEMP_DIR/disk1-BOOTX64.EFI"
+    esp0_mount="$VERIFY_TEMP_DIR/esp0"
+    esp1_mount="$VERIFY_TEMP_DIR/esp1"
+    mkdir -p "$esp0_mount" "$esp1_mount"
+    mount -o ro "${part2_paths[0]}" "$esp0_mount"
+    VERIFY_MOUNT_DIRS+=("$esp0_mount")
+    mount -o ro "${part2_paths[1]}" "$esp1_mount"
+    VERIFY_MOUNT_DIRS+=("$esp1_mount")
+    cmp "$esp0_mount/EFI/BOOT/BOOTX64.EFI" "$esp1_mount/EFI/BOOT/BOOTX64.EFI"
 
     if zpool list -H -o name 2>/dev/null | grep -qx flash; then
         echo "A pool named flash is already imported; refusing ambiguous verification." >&2
@@ -550,7 +564,7 @@ verify_test() {
 
     echo "Linux Rescue KVM E2E verification passed."
     echo "ZFS mirror members: ${part3_paths[0]}, ${part3_paths[1]}"
-    echo "EFI loader SHA256: $(sha256sum "$VERIFY_TEMP_DIR/disk0-BOOTX64.EFI" | awk '{print $1}')"
+    echo "EFI loader SHA256: $(sha256sum "$esp0_mount/EFI/BOOT/BOOTX64.EFI" | awk '{print $1}')"
     echo "Persisted host IDs: $(paste -sd, "$actual_map")"
     echo "Partition layout:"
     lsblk -o NAME,PATH,SIZE,TYPE,FSTYPE,PARTLABEL,MODEL,SERIAL "${DISKS[@]}"
