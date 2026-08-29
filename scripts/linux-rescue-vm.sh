@@ -230,6 +230,7 @@ find_ovmf_pair() {
 /usr/share/edk2/x64/OVMF_CODE.4m.fd|/usr/share/edk2/x64/OVMF_VARS.4m.fd
 /usr/share/edk2/x64/OVMF_CODE.fd|/usr/share/edk2/x64/OVMF_VARS.fd
 /usr/share/qemu/OVMF_CODE.fd|/usr/share/qemu/OVMF_VARS.fd
+/usr/share/qemu/ovmf-x64/OVMF_CODE-pure-efi.fd|/usr/share/qemu/ovmf-x64/OVMF_VARS-pure-efi.fd
 EOF
     return 1
 }
