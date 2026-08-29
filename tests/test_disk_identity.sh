@@ -99,4 +99,20 @@ assert_eq \
     "$(resolve_disk_id /dev/sda)" \
     'conventional disk identity must retain the generic model-plus-serial path'
 
+resolve_identity_map_id() {
+    [[ "$1" == "/dev/nvme0n1" ]] || return 1
+    printf '%s\n' 'PHYSICAL_NVME_ID'
+}
+IDENTITY_MAP_FILE="$fixture_root/physical-disk-map"
+: > "$IDENTITY_MAP_FILE"
+
+assert_eq \
+    'PHYSICAL_NVME_ID' \
+    "$(resolve_disk_id /dev/nvme0n1)" \
+    'a physical-disk handoff must override the guest-visible identity'
+
+if resolve_disk_id /dev/sda >/dev/null 2>&1; then
+    fail 'an active physical-disk handoff must reject disks that are not mapped'
+fi
+
 printf '%s\n' 'PASS: disk identity regression tests'

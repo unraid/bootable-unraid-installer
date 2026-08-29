@@ -348,17 +348,18 @@ fi
 echo "Using kernel version: $KERNEL_VERSION"
 echo "Clean build: $CLEAN_BUILD"
 
+KERNEL_CONFIG_FINGERPRINT="$(kernel_config_overrides | sha256sum | awk '{print $1}')"
+if [ -n "$KERNEL_CONFIG_FILE" ] && [ -f "$KERNEL_CONFIG_FILE" ]; then
+  KERNEL_CONFIG_FILE_FINGERPRINT="$(sha256sum "$KERNEL_CONFIG_FILE" | awk '{print $1}')"
+else
+  KERNEL_CONFIG_FILE_FINGERPRINT="none"
+fi
+
 if [ -n "$VERSION_LOCK_HASH" ]; then
-  KERNEL_INPUT_FINGERPRINT="$VERSION_LOCK_HASH"
+  KERNEL_INPUT_FINGERPRINT="${VERSION_LOCK_HASH}:${KERNEL_CONFIG_TARGET}:${KERNEL_CONFIG_FILE_FINGERPRINT}:${KERNEL_CONFIG_FINGERPRINT}"
 else
   echo "Preparing kernel source fingerprint input..."
   ensure_kernel_source_tree
-  KERNEL_CONFIG_FINGERPRINT="$(kernel_config_overrides | sha256sum | awk '{print $1}')"
-  if [ -n "$KERNEL_CONFIG_FILE" ] && [ -f "$KERNEL_CONFIG_FILE" ]; then
-    KERNEL_CONFIG_FILE_FINGERPRINT="$(sha256sum "$KERNEL_CONFIG_FILE" | awk '{print $1}')"
-  else
-    KERNEL_CONFIG_FILE_FINGERPRINT="none"
-  fi
   KERNEL_INPUT_FINGERPRINT="$(sha256sum "$WORKDIR/$KERNEL_TARBALL" | awk '{print $1}'):${KERNEL_CONFIG_TARGET}:${KERNEL_CONFIG_FILE_FINGERPRINT}:${KERNEL_CONFIG_FINGERPRINT}"
 fi
 
@@ -438,7 +439,7 @@ fi
 
 ZFS_BUILD_FINGERPRINT="${ZFS_TREE_STATE}:$(readlink -f "$KERNEL_SRC_DIR")"
 if [ -n "$VERSION_LOCK_HASH" ]; then
-  ZFS_BUILD_FINGERPRINT="$VERSION_LOCK_HASH"
+  ZFS_BUILD_FINGERPRINT="${VERSION_LOCK_HASH}:${ZFS_TREE_STATE}:${KERNEL_INPUT_FINGERPRINT}"
 fi
 
 if [ -f "$ZFS_BUILD_STAMP" ] && [ "$(cat "$ZFS_BUILD_STAMP")" = "$ZFS_BUILD_FINGERPRINT" ]; then

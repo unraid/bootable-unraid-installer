@@ -20,6 +20,15 @@ Flash Creator does not require a display on the server while it creates the
 USB drive. Unraid Installer requires display or console access to the target
 machine because you must boot the installer and use its menu there.
 
+For dedicated servers whose hardware console cannot boot the ISO reliably, use
+a Linux Rescue environment to host a temporary KVM/QEMU guest. Pass the
+physical disks into that guest, run the official installer, then shut the guest
+down and boot Unraid on bare metal. Follow
+[Linux Rescue installation](linux-rescue-install.md); a temporary VM needs the
+generated `fw_cfg` physical disk-ID handoff so Unraid does not retain QEMU
+device names. Hetzner is the first validated provider; other Rescue
+environments must expose KVM and the physical disks directly.
+
 ## What Unraid Installer can do
 
 Unraid Installer provides these functions:
@@ -148,6 +157,11 @@ environments where a permanent internal boot device is preferred.
    files, validates the SHA256 files, and writes the boot configuration.
 9. When the operation completes, reboot the target and select the new internal
    boot device.
+
+For a temporary installation VM, shut the VM down after step 8 and boot the
+physical server. Do not start the installed Unraid system inside the temporary
+VM because Unraid can rewrite pool assignments using virtual device
+identities.
 
 The internal boot action erases every selected disk. The installer also checks
 that the selected disk is not the active installer device or the disk that

@@ -36,11 +36,20 @@ latest_installer_version() {
         foreach ($releases as $release) {
             if (($release["draft"] ?? false) || ($release["prerelease"] ?? false)) continue;
             $tag = $release["tag_name"] ?? "";
-            if (preg_match("/^Installer-(\\d+(?:\\.\\d+)+)$/", $tag, $m)) $versions[] = $m[1];
+            if (preg_match("/^Installer-(\\d+(?:\\.\\d+)+)(?:-sp\\.([1-9]\\d*))?$/", $tag, $m)) {
+                $versions[] = [
+                    "text" => substr($tag, strlen("Installer-")),
+                    "base" => $m[1],
+                    "revision" => isset($m[2]) ? (int)$m[2] : 0,
+                ];
+            }
         }
         if (!$versions) exit(1);
-        usort($versions, "version_compare");
-        echo end($versions);
+        usort($versions, function ($a, $b) {
+            $base = version_compare($a["base"], $b["base"]);
+            return $base !== 0 ? $base : ($a["revision"] <=> $b["revision"]);
+        });
+        echo end($versions)["text"];
     ' "$metadata"
     local rc=$?
     rm -f "$metadata"
@@ -86,8 +95,21 @@ installer_update_warning() {
     local current latest
     current="$(installer_current_version)" || return 0
     latest="$(latest_installer_version)" || return 0
+    # A service-pack revision is newer than its stable base installer even
+    # though generic SemVer orders prerelease-looking suffixes before the base.
     # shellcheck disable=SC2016
-    if php -r 'exit(version_compare($argv[1], $argv[2], "<") ? 0 : 1);' "$current" "$latest"; then
+    if php -r '
+        $parse = function ($version) {
+            if (!preg_match("/^(\\d+(?:\\.\\d+)+)(?:-sp\\.([1-9]\\d*))?$/", $version, $m)) return null;
+            return ["base" => $m[1], "revision" => isset($m[2]) ? (int)$m[2] : 0];
+        };
+        $current = $parse($argv[1]);
+        $latest = $parse($argv[2]);
+        if ($current === null || $latest === null) exit(1);
+        $base = version_compare($current["base"], $latest["base"]);
+        $older = $base < 0 || ($base === 0 && $current["revision"] < $latest["revision"]);
+        exit($older ? 0 : 1);
+    ' "$current" "$latest"; then
         printf 'A newer Unraid ISO Installer is available (%s). This media is version %s.\nYou can continue, but using the latest installer is recommended.\n' "$latest" "$current"
     fi
 }

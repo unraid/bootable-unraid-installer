@@ -69,6 +69,17 @@ resolve_disk_id() {
     local model=""
     local short_serial=""
 
+    if declare -F resolve_identity_map_id >/dev/null 2>&1; then
+        id="$(resolve_identity_map_id "$disk" || true)"
+        if [[ -n "$id" ]]; then
+            printf '%s\n' "$id"
+            return 0
+        fi
+    fi
+    if [[ -n "${IDENTITY_MAP_FILE:-}" ]]; then
+        return 1
+    fi
+
     transport="$(lsblk -dn -o TRAN "$disk" 2>/dev/null | tr '[:upper:]' '[:lower:]' | head -n1 || true)"
     if is_mmc_disk_name "$disk"; then
         resolve_mmc_disk_id "$disk"
