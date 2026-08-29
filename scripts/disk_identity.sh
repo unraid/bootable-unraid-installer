@@ -134,7 +134,14 @@ resolve_disk_id() {
         fi
     done
 
-    id="$(lsblk -dn -o WWN,SERIAL "$disk" 2>/dev/null | awk '{print $1; exit}' || true)"
+    id="$(lsblk -dn -o WWN,SERIAL "$disk" 2>/dev/null | awk '{
+        for (field = 1; field <= 2; field++) {
+            if ($field != "" && $field != "-") {
+                print $field
+                exit
+            }
+        }
+    }' || true)"
     id="$(sanitize_disk_id "$id" "$transport")"
     if [[ -n "$id" && "$id" != "-" ]]; then
         printf '%s\n' "$id"

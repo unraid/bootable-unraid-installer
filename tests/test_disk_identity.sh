@@ -63,10 +63,14 @@ case "$*" in
     *'-o TRAN /dev/mmcblk2'*) printf '%s\n' 'mmc' ;;
     *'-o TRAN /dev/nvme0n1'*) printf '%s\n' 'nvme' ;;
     *'-o TRAN /dev/sda'*) printf '%s\n' 'sata' ;;
+    *'-o TRAN /dev/sdb'*) printf '%s\n' 'usb' ;;
+    *'-o TRAN /dev/sdc'*) printf '%s\n' 'usb' ;;
     *'-o MODEL /dev/nvme0n1'*) printf '%s\n' 'NVMe Test Model' ;;
     *'-o MODEL /dev/sda'*) printf '%s\n' 'SATA Test Model' ;;
     *'-o SERIAL /dev/nvme0n1'*) printf '%s\n' 'NVME123' ;;
     *'-o SERIAL /dev/sda'*) printf '%s\n' 'SATA123' ;;
+    *'-o WWN,SERIAL /dev/sdb'*) printf '%s\n' '- USB_FALLBACK_123' ;;
+    *'-o WWN,SERIAL /dev/sdc'*) printf '%s\n' '- -' ;;
     *) printf '%s\n' '' ;;
 esac
 EOF
@@ -98,6 +102,15 @@ assert_eq \
     'SATA_Test_Model_SATA123' \
     "$(resolve_disk_id /dev/sda)" \
     'conventional disk identity must retain the generic model-plus-serial path'
+
+assert_eq \
+    'USB_FALLBACK_123' \
+    "$(resolve_disk_id /dev/sdb)" \
+    'the final lsblk fallback must use SERIAL when WWN is unavailable'
+
+if resolve_disk_id /dev/sdc >/dev/null 2>&1; then
+    fail 'the final lsblk fallback must stay empty when WWN and SERIAL are unavailable'
+fi
 
 resolve_identity_map_id() {
     [[ "$1" == "/dev/nvme0n1" ]] || return 1
