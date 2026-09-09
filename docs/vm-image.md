@@ -37,7 +37,7 @@ Outputs:
 - `unraid-vm.qcow2.sha256`: the disk's SHA-256 digest.
 - `unraid-vm.qcow2.build.log`: the installer console log, also retained on failure.
 
-The default virtual disk capacity is 4 GiB, with a dedicated boot pool.
+The default virtual disk capacity is 8 GiB, with a dedicated boot pool.
 `--disk-mib` can increase the capacity. Unused sectors do not increase the
 download by the full reserved capacity.
 
@@ -112,3 +112,27 @@ reject `qcow2`; raw/ISO-only providers need the companion update.
 
 Release builds publish `unraid-vm-<installer-version>.qcow2` and its manifest
 and checksums alongside the existing installer downloads.
+
+## Automated firmware E2E
+
+The existing `linux-rescue-kvm-e2e.sh` harness includes a `ci-vm-image` action:
+
+```bash
+tests/linux-rescue-kvm-e2e.sh ci-vm-image \
+  --vm-image zfs-live-build/unraid-vm.qcow2 \
+  --state-dir /tmp/unraid-vm-e2e
+```
+
+It uses the built artifact unchanged, boots a private overlay through UEFI on
+NVMe with a different serial, shuts down cleanly, and boots that same overlay
+on SATA with a different model and serial. Guest assertions verify the saved
+boot-pool identity, a healthy ZFS pool, the management process, the default
+8 GiB disk, and a boot partition larger than 7 GiB. The test also verifies that
+the distributed image checksum did not change.
+
+The GitHub E2E matrix runs this action with KVM and archives its transcripts,
+console captures, and JSON results. It needs QEMU, OVMF, Python, and Tesseract.
+Tesseract only detects the login/shell prompts; guest commands determine success.
+Use a new empty state directory for each run. For local software emulation,
+pass `--accel tcg` and the matching `--firmware-code`/`--firmware-vars` paths.
+No host block devices or root access are required for this image-only action.

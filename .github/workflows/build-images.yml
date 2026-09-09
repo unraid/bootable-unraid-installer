@@ -460,7 +460,7 @@ jobs:
     needs: build-images
     if: ${{ needs.build-images.result == 'success' && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -473,6 +473,10 @@ jobs:
             action: ci-menu
             state_dir: unraid-installer-menu-e2e
             artifact: iso-installer-menu-kvm-e2e
+          - name: Preinstalled VM Image KVM E2E
+            action: ci-vm-image
+            state_dir: unraid-vm-image-e2e
+            artifact: vm-image-kvm-e2e
           - name: eMMC Identity KVM E2E
             action: ci-emmc
             state_dir: unraid-installer-emmc-e2e
@@ -488,9 +492,17 @@ jobs:
           fetch-depth: 1
 
       - name: Download installer ISO
+        if: ${{ matrix.action != 'ci-vm-image' }}
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: install-user-iso-${{ github.run_number }}
+          path: artifacts/e2e
+
+      - name: Download built VM image
+        if: ${{ matrix.action == 'ci-vm-image' }}
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: unraid-vm-qcow2-${{ github.run_number }}
           path: artifacts/e2e
 
       - name: Install KVM test dependencies
@@ -508,6 +520,7 @@ jobs:
             ovmf \
             parted \
             python3 \
+            tesseract-ocr \
             qemu-system-x86 \
             qemu-utils \
             xorriso \
@@ -526,7 +539,7 @@ jobs:
           qemu-system-x86_64 --version
 
       - name: Download pinned Unraid OS payload
-        if: ${{ matrix.action != 'ci-emmc' }}
+        if: ${{ matrix.action != 'ci-emmc' && matrix.action != 'ci-vm-image' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -542,6 +555,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          if [[ "${{ matrix.action }}" == "ci-vm-image" ]]; then
+            tests/linux-rescue-kvm-e2e.sh ci-vm-image \
+              --vm-image artifacts/e2e/unraid-vm.qcow2 \
+              --state-dir "$RUNNER_TEMP/${{ matrix.state_dir }}" --ram 8192 --cpus 2
+            exit 0
+          fi
           iso="$(find artifacts/e2e -maxdepth 1 -type f -name 'install-user.iso' -print -quit)"
           [[ -n "$iso" ]]
           args=(
@@ -575,4 +594,9 @@ jobs:
             ${{ runner.temp }}/${{ matrix.state_dir }}/serial.log
             ${{ runner.temp }}/${{ matrix.state_dir }}/disk-identities.tsv
             ${{ runner.temp }}/${{ matrix.state_dir }}/installer-command.txt
+            ${{ runner.temp }}/${{ matrix.state_dir }}/*-serial.log
+            ${{ runner.temp }}/${{ matrix.state_dir }}/*-qemu.log
+            ${{ runner.temp }}/${{ matrix.state_dir }}/*.ppm
+            ${{ runner.temp }}/${{ matrix.state_dir }}/*-console.txt
+            ${{ runner.temp }}/${{ matrix.state_dir }}/*result.json
           if-no-files-found: warn

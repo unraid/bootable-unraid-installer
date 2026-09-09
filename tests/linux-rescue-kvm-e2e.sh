@@ -13,8 +13,12 @@ NETWORK_BRIDGE=""
 ISO=""
 SEED_IMAGE=""
 UNRAID_ZIP=""
+VM_IMAGE=""
+VM_ACCEL="kvm"
+VM_FIRMWARE_ARGS=()
 DISKS=()
 ACTION="${1:-}"
+[[ "$ACTION" != "ci-vm-image" ]] || RAM_MIB="8192"
 VERIFY_POOL_IMPORTED=0
 VERIFY_TEMP_DIR=""
 VERIFY_MOUNT_DIRS=()
@@ -34,6 +38,8 @@ Usage:
   sudo tests/linux-rescue-kvm-e2e.sh ci-menu --iso PATH --unraid-zip PATH [options]
   sudo tests/linux-rescue-kvm-e2e.sh ci-emmc --iso PATH --unraid-zip PATH [options]
 
+  tests/linux-rescue-kvm-e2e.sh ci-vm-image --vm-image PATH --state-dir DIR [options]
+
 Actions:
   launch   Start the installer VM with exactly two disposable whole disks.
   stop     Stop the test VM through its QEMU monitor, then flush both disks.
@@ -45,6 +51,9 @@ Actions:
            serial console, verify the install, and clean up.
   ci-emmc  Install to one emulated MMC device through the real ISO menu and
            verify the eMMC product-plus-serial Boot Pool identity path.
+
+  ci-vm-image  Firmware-boot the built QCOW2 on NVMe, then relocate the same
+               disk to SATA; verify identity, management, and 8 GiB capacity.
 
 Options:
   --iso PATH          Installer ISO to boot (required by launch)
@@ -58,6 +67,10 @@ Options:
   --seed-image PATH   Read-only installer persistence seed passed to the launcher
   --unraid-zip PATH   Verified Unraid OS ZIP used by ci and ci-menu. ci-emmc
                       creates a small checksum-valid payload fixture instead.
+  --vm-image PATH     Built QCOW2 for ci-vm-image (no host block devices)
+  --accel kvm|tcg      VM-image E2E acceleration (default: kvm)
+  --firmware-code PATH  UEFI code file for VM-image E2E
+  --firmware-vars PATH  Matching UEFI variables template for VM-image E2E
   --help              Show this help
 
 This harness is destructive. Use only disks supplied by a disposable test
@@ -74,6 +87,21 @@ fi
 
 while (($#)); do
     case "$1" in
+        --vm-image)
+            [[ $# -ge 2 ]] || exit 2
+            VM_IMAGE="$2"
+            shift 2
+            ;;
+        --accel)
+            [[ $# -ge 2 ]] || exit 2
+            VM_ACCEL="$2"
+            shift 2
+            ;;
+        --firmware-code|--firmware-vars)
+            [[ $# -ge 2 ]] || exit 2
+            VM_FIRMWARE_ARGS+=("$1" "$2")
+            shift 2
+            ;;
         --iso)
             [[ $# -ge 2 ]] || { echo "Missing value for --iso" >&2; exit 2; }
             ISO="$2"
@@ -135,6 +163,17 @@ while (($#)); do
             ;;
     esac
 done
+
+# The image-only action owns file-backed overlays and does not need root/NBD.
+if [[ "$ACTION" == "ci-vm-image" ]]; then
+    [[ -n "$VM_IMAGE" && ${#DISKS[@]} == 0 ]] || {
+        echo "ci-vm-image requires --vm-image and does not accept --disk." >&2
+        exit 2
+    }
+    exec python3 "$SCRIPT_DIR/vm-image-boot-driver.py" --vm-image "$VM_IMAGE" \
+        --state-dir "$STATE_DIR" --accel "$VM_ACCEL" --ram "$RAM_MIB" --cpus "$VCPUS" \
+        "${VM_FIRMWARE_ARGS[@]}"
+fi
 
 [[ "$EUID" -eq 0 ]] || { echo "Run this harness as root." >&2; exit 1; }
 [[ "$STATE_DIR" == /* && "$STATE_DIR" != "/" ]] || {
