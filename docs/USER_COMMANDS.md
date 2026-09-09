@@ -70,12 +70,13 @@ Purpose:
 Usage:
 
 ```bash
-./scripts/build-install-images.sh [--user] [--mode full|grub-iso] [--menu-ui gui] [--menu-backend auto|whiptail|dialog|text] [--persist-fs ext4|fat32|vfat] [--size SIZE] [--clean-build] [--force]
+./scripts/build-install-images.sh [--user] [--mode full|grub-iso] [--menu-ui gui] [--menu-backend auto|whiptail|dialog|text] [--persist-fs ext4|fat32|vfat] [--size SIZE] [--clean-build] [--vm-image] [--force]
 ```
 
 Options:
 
 - `--user`: accepted alias for user-only flow
+- `--vm-image`: also create a preinstalled QCOW2. See [VM image builds](vm-image.md).
 - `--mode MODE`: first run mode, `full` or `grub-iso` (default `full`)
 - `--menu-ui UI`: default menu implementation, `gui` only
 - `--menu-backend BACKEND`: default menu backend for `build-install-images.sh`, `auto|whiptail|dialog|text`

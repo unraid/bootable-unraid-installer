@@ -6,7 +6,7 @@ usage() {
 Build user install images.
 
 Usage:
-  ./build-install-images.sh [--user] [--mode full|grub-iso] [--menu-ui gui] [--menu-backend auto|whiptail|dialog|text] [--persist-fs ext4|fat32|vfat] [--size SIZE] [--clean-build] [--force]
+  ./build-install-images.sh [--user] [--mode full|grub-iso] [--menu-ui gui] [--menu-backend auto|whiptail|dialog|text] [--persist-fs ext4|fat32|vfat] [--size SIZE] [--clean-build] [--vm-image] [--force]
 
 Options:
   --user              Build install-user images (default behavior)
@@ -17,12 +17,14 @@ Options:
   --size SIZE         Image size passed to build-usb-native.sh (default: auto)
   --clean-build       Force clean kernel/ZFS rebuild (applies to full-mode ISO build)
   --force             Overwrite existing output files
+  --vm-image          Also build a preinstalled Unraid QCOW2 (requires accessible KVM)
   -h, --help          Show this help
 
 Outputs (in ./zfs-live-build):
   install-user.iso
   install-user.img
   install-user-minimal.img
+  unraid-vm.qcow2, .qcow2.json, .qcow2.sha256 (with --vm-image)
 
 Published copies:
   $PUBLISH_DIR/install-user.iso
@@ -42,6 +44,7 @@ PERSIST_FS=""
 IMAGE_SIZE="auto"
 FORCE=0
 CLEAN_BUILD=0
+VM_IMAGE=0
 PUBLISH_DIR="${PUBLISH_DIR:-$REPO_ROOT/artifacts/published}"
 PUBLISH_ENABLED="${PUBLISH_ENABLED:-1}"
 
@@ -77,6 +80,10 @@ while (($#)); do
       ;;
     --force)
       FORCE=1
+      shift
+      ;;
+    --vm-image)
+      VM_IMAGE=1
       shift
       ;;
     --clean-build)
@@ -163,6 +170,10 @@ publish_profile_artifacts() {
   cp "$iso_path" "$PUBLISH_DIR/"
   cp "$native_img_path" "$PUBLISH_DIR/"
   cp "$native_minimal_img_path" "$PUBLISH_DIR/"
+  if [[ "$VM_IMAGE" -eq 1 ]]; then
+    cp "$WORKDIR/unraid-vm.qcow2" "$WORKDIR/unraid-vm.qcow2.json" \
+      "$WORKDIR/unraid-vm.qcow2.sha256" "$PUBLISH_DIR/"
+  fi
 
   echo "Published ISO: $PUBLISH_DIR/$(basename "$iso_path")"
   echo "Published IMG: $PUBLISH_DIR/$(basename "$native_img_path")"
@@ -222,6 +233,11 @@ build_profile() {
     --no-persist \
     "${force_args[@]}"
   echo "Built minimal image: $native_minimal_img_path"
+
+  if [[ "$VM_IMAGE" -eq 1 ]]; then
+    python3 "$SCRIPT_DIR/build-vm-image.py" --iso "$iso_path" \
+      --output "$WORKDIR/unraid-vm.qcow2" "${force_args[@]}"
+  fi
 
   publish_profile_artifacts "$profile"
 }

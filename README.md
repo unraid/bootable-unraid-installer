@@ -2,7 +2,8 @@
 
 This repository contains build and packaging scripts for creating Unraid installer media.
 
-The toolchain focuses on producing bootable installer artifacts (ISO and IMG), plus helper assets used by the installer runtime.
+The toolchain produces bootable installer artifacts (ISO and IMG), an optional
+[preinstalled Unraid VM image](docs/vm-image.md) (QCOW2), and installer runtime helpers.
 
 ## What This Repo Does
 
