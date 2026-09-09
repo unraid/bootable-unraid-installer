@@ -61,9 +61,17 @@ firmware boot.
 ## Boot with QEMU
 
 Use x86-64, q35, UEFI with Secure Boot disabled, and at least 8 GiB RAM.
-Attach the image as NVMe with serial `UNRAID_VM_BOOT`. The default QEMU NVMe
-model must remain `QEMU NVMe Ctrl`. Unraid stores the resulting disk identity
-in its boot-pool configuration.
+The image detects its boot disk from the mounted ZFS pool and refreshes the
+saved pool assignment before starting management, in both normal and safe mode.
+There is no required model or serial value. Give the virtual disk a stable,
+nonempty serial of your choice; QA-VM supplies one automatically. NVMe is the
+recommended attachment. The bootloader locates the pool by its UUID.
+
+The identity hook changes only this image's single-device `boot` pool assignment.
+If discovery is ambiguous or the disk has no usable identity, management startup
+stops with a console error instead of assigning an unrelated disk. Keep the hook
+in `config/go` and `config/go.safemode` if customizing startup. Attach only one
+clone of this image to a VM because clones retain the same ZFS pool UUID.
 
 Use a private writable copy or overlay for each VM. For example:
 
@@ -75,7 +83,7 @@ qemu-system-x86_64 -machine q35,accel=kvm -cpu host -m 8192 -smp 2 -vga virtio \
   -drive if=pflash,format=raw,readonly=on,file=/path/to/OVMF_CODE.fd \
   -drive if=pflash,format=raw,file=/path/to/private/OVMF_VARS.fd \
   -drive file=/absolute/path/session.qcow2,format=qcow2,if=none,id=boot \
-  -device nvme,drive=boot,serial=UNRAID_VM_BOOT,bootindex=1
+  -device nvme,drive=boot,serial=my-vm-boot,bootindex=1
 ```
 
 Use a matching firmware pair and copy the variables file for each VM. The

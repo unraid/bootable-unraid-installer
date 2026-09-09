@@ -4,6 +4,7 @@
 import argparse
 import importlib.util
 import json
+import os
 from pathlib import Path
 import shutil
 import stat
@@ -76,6 +77,56 @@ class VMImageTests(unittest.TestCase):
         restored = self.root / "restored.raw"
         vm.run("qemu-img", "convert", "-f", "qcow2", "-O", "raw", selected, restored)
         self.assertEqual(vm.sha256(raw), vm.sha256(restored))
+
+
+    def test_boot_identity_tracks_actual_pool_and_preserves_other_settings(self):
+        self.check_boot_identity("NEW_MODEL_custom-serial", "diskId=\"NEW_MODEL_custom-serial\"")
+
+    def test_boot_identity_refuses_ambiguous_pool_or_missing_identity(self):
+        for members, identity in [("/dev/nvme0n1p3\n/dev/sda3", "new-id"),
+                                  ("/dev/nvme0n1p3", ""),
+                                  ("/dev/nvme0n1p3", "bad id")]:
+            with self.subTest(members=members, identity=identity):
+                self.check_boot_identity(identity, None, members)
+
+    def check_boot_identity(self, identity, expected, members="/dev/nvme0n1p3"):
+        boot = self.root / "boot"
+        helpers = boot / "config/vm-image"
+        helpers.mkdir(parents=True, exist_ok=True)
+        (helpers / "disk_identity.sh").write_text(
+            'resolve_disk_id() { printf "%s\\n" "$TEST_IDENTITY"; }\n')
+        pools = boot / "config/pools"
+        pools.mkdir(exist_ok=True)
+        cfg = pools / "boot.cfg"
+        original = 'diskId="old-model_old-serial"\ndiskComment="preserve this"\n'
+        cfg.write_text(original)
+        commands = self.root / "commands"
+        commands.mkdir(exist_ok=True)
+        for name, body in {
+            "findmnt": 'echo flash/boot',
+            "zpool": 'printf "%s\\n" "$TEST_MEMBERS"',
+            "readlink": 'echo /dev/nvme0n1p3',
+            "lsblk": 'echo nvme0n1',
+            "chmod": 'exit 0',
+            "sync": 'exit 0',
+        }.items():
+            command = commands / name
+            command.write_text('#!/bin/sh\n' + body + '\n')
+            command.chmod(0o755)
+        env = dict(os.environ, PATH=str(commands) + os.pathsep + os.environ["PATH"],
+                   TEST_IDENTITY=identity, TEST_MEMBERS=members)
+        result = subprocess.run(["bash", str(vm.REPO / "scripts/vm-boot-identity.sh"), str(boot)],
+                                env=env, capture_output=True, text=True)
+        if expected is None:
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(cfg.read_text(), original)
+        else:
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(cfg.read_text(), expected + '\ndiskComment="preserve this"\n')
+            before = cfg.stat().st_mtime_ns
+            subprocess.run(["bash", str(vm.REPO / "scripts/vm-boot-identity.sh"), str(boot)],
+                           env=env, capture_output=True, check=True)
+            self.assertEqual(cfg.stat().st_mtime_ns, before)
 
     def build_args(self):
         iso = self.root / "installer.iso"

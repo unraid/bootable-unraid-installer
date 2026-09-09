@@ -18,8 +18,6 @@ import zipfile
 
 REPO = Path(__file__).resolve().parent.parent
 SERIAL = "UNRAID_VM_BOOT"
-MODEL = "QEMU NVMe Ctrl"
-DISK_ID = "QEMU_NVMe_Ctrl_" + SERIAL
 
 # The seed is private to this build. No host disks or network are exposed.
 GUEST_MENU = r'''#!/bin/bash
@@ -46,7 +44,7 @@ printf '\nYES\nn\n' | BOOT_POOL_NAME=boot MENU_BACKEND=text \
 
 # Reopen the exported pool to verify what the next boot will read.
 mkdir -p /tmp/vm-verify
-zpool import -N -o readonly=on -o cachefile=none -R /tmp/vm-verify -d /dev/nvme0n1p3 flash
+zpool import -N -o cachefile=none -R /tmp/vm-verify -d /dev/nvme0n1p3 flash
 zfs mount flash/boot
 boot_mount="$(zfs get -H -o value mountpoint flash/boot)"
 [[ "$boot_mount" == /tmp/vm-verify/* ]]
@@ -58,6 +56,21 @@ grep -qx 'diskId="QEMU_NVMe_Ctrl_UNRAID_VM_BOOT"' "$boot_mount/config/pools/boot
 test -z "$(find "$boot_mount/config" -iname '*.key' -print -quit)"
 mcopy -i /dev/nvme0n1p2 ::/EFI/BOOT/BOOTX64.EFI /tmp/vm-bootx64.efi
 test -s /tmp/vm-bootx64.efi
+# Install the pre-management hook for normal and safe-mode startup.
+mkdir -p "$boot_mount/config/vm-image"
+cp "$PERSISTENT_ROOT/runtime/vm-boot-identity.sh" "$boot_mount/config/vm-image/"
+cp "$PERSISTENT_ROOT/runtime/disk_identity.sh" "$boot_mount/config/vm-image/"
+for startup in go go.safemode; do
+    cat > "$boot_mount/config/$startup" <<'STARTUP'
+#!/bin/bash
+if ! /bin/bash /boot/config/vm-image/vm-boot-identity.sh; then
+    echo 'VM boot identity failed; management startup stopped. Check the boot disk identity.' >&2
+    exit 1
+fi
+/usr/local/sbin/emhttp
+STARTUP
+done
+sed -i 's/^diskId=.*/diskId=""/' "$boot_mount/config/pools/boot.cfg"
 zpool export flash
 '''
 
@@ -155,6 +168,8 @@ def build(args):
                 "=https", "--retry", "3", "--output", archive, lock["url"])
         verify_zip(archive, lock["sha256"])
         (seed / "runtime" / "menu.sh").write_text(GUEST_MENU)
+        for helper in ("vm-boot-identity.sh", "disk_identity.sh"):
+            shutil.copyfile(REPO / "scripts" / helper, seed / "runtime" / helper)
         seed_iso = work / "seed.iso"
         run("xorriso", "-as", "mkisofs", "-quiet", "-V", "INSTALL-PERSIST",
             "-o", seed_iso, seed)
@@ -204,10 +219,9 @@ def build(args):
             "installerIsoSha256": sha256(args.iso),
             "hardware": {"architecture": "x86_64", "machine": "q35", "firmware": "uefi",
                          "secureBoot": False, "memoryMiB": args.ram_mib,
-                         "bootDisk": {"bus": "nvme", "model": MODEL, "serial": SERIAL,
-                                      "unraidDiskId": DISK_ID}},
+                         "bootDisk": {"bus": "nvme", "identity": "detected-before-management-start"}},
             "qaVmBootMedia": {"id": "unraid-vm", "format": "qcow2", "bus": "nvme",
-                              "serial": SERIAL, "sourceRef": output.name, "sha256": digest},
+                              "sourceRef": output.name, "sha256": digest},
             "licenseIncluded": False,
             "validation": {"installerCompleted": True, "qcow2Check": True,
                            "rawCompare": True, "firmwareBootTested": False},
