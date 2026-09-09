@@ -138,7 +138,7 @@ class VMImageTests(unittest.TestCase):
                                    "sha256": vm.sha256(archive)}))
         return argparse.Namespace(iso=iso, unraid_zip=archive, release_lock=lock,
                                   output=self.root / "unraid-vm.qcow2", force=False,
-                                  accel="tcg", disk_mib=4096, ram_mib=8192,
+                                  accel="tcg", disk_mib=8192, ram_mib=8192,
                                   timeout=1, compression="smallest")
 
     def test_refuses_existing_image_before_running_commands(self):

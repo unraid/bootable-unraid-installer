@@ -250,7 +250,7 @@ def main():
     parser.add_argument("--unraid-zip", type=Path, help="Local ZIP matching the release lock; otherwise download")
     parser.add_argument("--release-lock", type=Path, default=REPO / "build/unraid-release-lock.json")
     parser.add_argument("--output", type=Path, default=REPO / "zfs-live-build/unraid-vm.qcow2")
-    parser.add_argument("--disk-mib", type=positive_int, default=4096, help="Virtual disk capacity (minimum 4096)")
+    parser.add_argument("--disk-mib", type=positive_int, default=8192, help="Virtual disk capacity (default 8192, minimum 4096)")
     parser.add_argument("--ram-mib", type=positive_int, default=8192)
     parser.add_argument("--timeout", type=positive_int, default=1800, help="Installer deadline in seconds")
     parser.add_argument("--accel", choices=("kvm", "tcg"), default="kvm")
