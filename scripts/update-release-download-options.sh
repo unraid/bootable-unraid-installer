@@ -86,6 +86,7 @@ Choose the installer asset that matches the install path:
 
 - **Online installer**: \`unraid-installer-${RELEASE_VERSION}-online.iso\` or \`unraid-installer-${RELEASE_VERSION}-online.img.zip\`. This is the smaller download. It boots the installer and downloads Unraid OS during installation, so the target system needs network access.
 - **Bundled installer**: \`unraid-installer-${RELEASE_VERSION}-bundled.img.zip\`. This is the larger download because it includes the pinned Unraid OS payload. Use it when the installer media should already contain the approved Unraid OS ZIP.
+- **Preinstalled VM**: \`unraid-vm-${RELEASE_VERSION}.qcow2\` boots directly into Unraid. Its \`.json\` manifest records the required UEFI/NVMe hardware and QA-VM boot-media settings. No license is included.
 - **Linux Rescue**: download and run \`unraid-installer-linux-rescue.sh\` from this release. The launcher downloads and SHA256-verifies this release's online ISO, lists eligible physical disks, and asks which one or two to pass to the installer VM.
 - **Checksums**: each downloadable asset has matching \`.md5\` and \`.sha256\` files.
 

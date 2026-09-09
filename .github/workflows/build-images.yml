@@ -153,7 +153,7 @@ jobs:
           find zfs-live-build -maxdepth 1 -type f -name '.*-build-*.stamp' -print | sort || true
 
           echo "Removing any restored final release artifacts before this run builds fresh outputs."
-          find zfs-live-build -maxdepth 1 -type f \( -name 'install-*.iso' -o -name 'install-*.img' \) -print -delete
+          find zfs-live-build -maxdepth 1 -type f \( -name 'install-*.iso' -o -name 'install-*.img' -o -name 'unraid-vm.qcow2*' \) -print -delete
 
           if [[ -d zfs-live-build/rootfs ]]; then
             echo "Removing restored rootfs; release builds should regenerate runtime filesystem content."
@@ -175,6 +175,9 @@ jobs:
           set -euo pipefail
           chmod +x ./scripts/install-deps.sh
           sudo ./scripts/install-deps.sh
+
+      - name: Test VM image packaging
+        run: python3 -m unittest discover -s tests -p test_vm_image.py -v
 
       - name: Prepare workspace seed and publish paths
         shell: bash
@@ -216,7 +219,9 @@ jobs:
         run: |
           set -euo pipefail
 
-          args=(--mode "full" --persist-fs "$PERSIST_FS" --menu-backend "$MENU_BACKEND")
+          [[ -c /dev/kvm ]] || { echo "KVM is required for the VM image build" >&2; exit 1; }
+          sudo chmod a+rw /dev/kvm
+          args=(--vm-image --mode "full" --persist-fs "$PERSIST_FS" --menu-backend "$MENU_BACKEND")
 
           if [[ "$CLEAN_BUILD" == "true" ]]; then
             args+=(--clean-build)
@@ -236,6 +241,9 @@ jobs:
           required_outputs=(
             zfs-live-build/install-user.iso
             zfs-live-build/install-user.img
+            zfs-live-build/unraid-vm.qcow2
+            zfs-live-build/unraid-vm.qcow2.json
+            zfs-live-build/unraid-vm.qcow2.sha256
           )
 
           for output in "${required_outputs[@]}"; do
@@ -249,7 +257,7 @@ jobs:
           set -euo pipefail
           mkdir -p artifacts
           if [[ -d zfs-live-build ]]; then
-            find zfs-live-build -maxdepth 1 -type f \( -name "install-*.iso" -o -name "install-*.img" \) -exec cp -v {} artifacts/ \;
+            find zfs-live-build -maxdepth 1 -type f \( -name "install-*.iso" -o -name "install-*.img" -o -name "unraid-vm.qcow2*" \) -exec cp -v {} artifacts/ \;
           fi
 
       - name: Smoke check artifacts and generate checksums
@@ -259,7 +267,7 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
 
-          artifacts_to_check=(artifacts/install-*.iso artifacts/install-*.img)
+          artifacts_to_check=(artifacts/install-*.iso artifacts/install-*.img artifacts/unraid-vm.qcow2)
           [[ ${#artifacts_to_check[@]} -gt 0 ]] || {
             echo "No install artifacts found for smoke checks" >&2
             exit 1
@@ -272,6 +280,10 @@ jobs:
 
             mime_type="$(file --brief --mime-type "$artifact")"
             case "$artifact" in
+              *.qcow2)
+                qemu-img check -f qcow2 "$artifact"
+                min_size_bytes=67108864
+                ;;
               *.iso)
                 [[ "$mime_type" == "application/x-iso9660-image" || "$mime_type" == "application/octet-stream" ]] || {
                   echo "Unexpected ISO mime type for $artifact: $mime_type" >&2
@@ -329,7 +341,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          find zfs-live-build -maxdepth 1 -type f \( -name 'install-*.iso' -o -name 'install-*.img' \) -delete
+          find zfs-live-build -maxdepth 1 -type f \( -name 'install-*.iso' -o -name 'install-*.img' -o -name 'unraid-vm.qcow2*' \) -delete
           if [[ -d zfs-live-build/rootfs ]]; then
             sudo rm -rf zfs-live-build/rootfs
           fi
@@ -393,6 +405,28 @@ jobs:
           retention-days: ${{ env.ARTIFACT_RETENTION_DAYS }}
           path: artifacts/install-user-minimal.img
           if-no-files-found: warn
+
+      - name: Upload preinstalled Unraid VM image
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: unraid-vm-qcow2-${{ github.run_number }}
+          retention-days: ${{ env.ARTIFACT_RETENTION_DAYS }}
+          compression-level: 0
+          path: |
+            artifacts/unraid-vm.qcow2
+            artifacts/unraid-vm.qcow2.json
+            artifacts/unraid-vm.qcow2.sha256
+          if-no-files-found: warn
+
+      - name: Upload VM build log
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: unraid-vm-build-log-${{ github.run_number }}
+          retention-days: ${{ env.ARTIFACT_RETENTION_DAYS }}
+          path: artifacts/unraid-vm.qcow2.build.log
+          if-no-files-found: ignore
 
       - name: Upload user checksums
         if: ${{ always() }}
