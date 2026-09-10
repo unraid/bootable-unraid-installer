@@ -220,8 +220,7 @@ jobs:
           set -euo pipefail
 
           [[ -c /dev/kvm ]] || { echo "KVM is required for the VM image build" >&2; exit 1; }
-          sudo chmod a+rw /dev/kvm
-          args=(--vm-image --mode "full" --persist-fs "$PERSIST_FS" --menu-backend "$MENU_BACKEND")
+          args=(--mode "full" --persist-fs "$PERSIST_FS" --menu-backend "$MENU_BACKEND")
 
           if [[ "$CLEAN_BUILD" == "true" ]]; then
             args+=(--clean-build)
@@ -232,6 +231,27 @@ jobs:
           fi
 
           ./scripts/build-install-images.sh "${args[@]}"
+
+      - name: Build preinstalled VM image
+        shell: bash
+        env:
+          FORCE_BUILD: ${{ github.event_name != 'workflow_dispatch' || inputs.force }}
+          PUBLISH_ENABLED: ${{ github.event_name == 'workflow_dispatch' && inputs.publish && '1' || '0' }}
+        run: |
+          set -euo pipefail
+          # ISO construction installs udev with the host /dev bind-mounted.
+          # Restore runner access after that work, immediately before QEMU.
+          sudo chmod 0666 /dev/kvm
+          python3 -c 'import os; fd = os.open("/dev/kvm", os.O_RDWR); os.close(fd)'
+          args=(--iso zfs-live-build/install-user.iso --output zfs-live-build/unraid-vm.qcow2)
+          if [[ "$FORCE_BUILD" == "true" ]]; then
+            args+=(--force)
+          fi
+          python3 scripts/build-vm-image.py "${args[@]}"
+          if [[ "$PUBLISH_ENABLED" == "1" ]]; then
+            cp zfs-live-build/unraid-vm.qcow2 zfs-live-build/unraid-vm.qcow2.json \
+              zfs-live-build/unraid-vm.qcow2.sha256 "$PUBLISH_DIR/"
+          fi
 
       - name: Validate user ISO and IMG outputs
         shell: bash
