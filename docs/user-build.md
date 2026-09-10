@@ -15,6 +15,10 @@ Define the build-chain behavior for user artifacts.
 - `zfs-live-build/install-user.iso`
 - `zfs-live-build/install-user.img`
 - `zfs-live-build/install-user-minimal.img` online installer image
+- `zfs-live-build/unraid-vm.qcow2` preinstalled VM boot disk (with `--vm-image`)
+
+See [VM image builds and QA-VM import](vm-image.md) for compression, hardware,
+and verification requirements. CI release builds include this artifact.
 
 ## Build Entry Point
 

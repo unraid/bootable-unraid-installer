@@ -153,7 +153,7 @@ jobs:
           find zfs-live-build -maxdepth 1 -type f -name '.*-build-*.stamp' -print | sort || true
 
           echo "Removing any restored final release artifacts before this run builds fresh outputs."
-          find zfs-live-build -maxdepth 1 -type f \( -name 'install-*.iso' -o -name 'install-*.img' \) -print -delete
+          find zfs-live-build -maxdepth 1 -type f \( -name 'install-*.iso' -o -name 'install-*.img' -o -name 'unraid-vm.qcow2*' \) -print -delete
 
           if [[ -d zfs-live-build/rootfs ]]; then
             echo "Removing restored rootfs; release builds should regenerate runtime filesystem content."
@@ -175,6 +175,9 @@ jobs:
           set -euo pipefail
           chmod +x ./scripts/install-deps.sh
           sudo ./scripts/install-deps.sh
+
+      - name: Test VM image packaging
+        run: python3 -m unittest discover -s tests -p test_vm_image.py -v
 
       - name: Prepare workspace seed and publish paths
         shell: bash
@@ -216,6 +219,7 @@ jobs:
         run: |
           set -euo pipefail
 
+          [[ -c /dev/kvm ]] || { echo "KVM is required for the VM image build" >&2; exit 1; }
           args=(--mode "full" --persist-fs "$PERSIST_FS" --menu-backend "$MENU_BACKEND")
 
           if [[ "$CLEAN_BUILD" == "true" ]]; then
@@ -228,6 +232,27 @@ jobs:
 
           ./scripts/build-install-images.sh "${args[@]}"
 
+      - name: Build preinstalled VM image
+        shell: bash
+        env:
+          FORCE_BUILD: ${{ github.event_name != 'workflow_dispatch' || inputs.force }}
+          PUBLISH_ENABLED: ${{ github.event_name == 'workflow_dispatch' && inputs.publish && '1' || '0' }}
+        run: |
+          set -euo pipefail
+          # ISO construction installs udev with the host /dev bind-mounted.
+          # Restore runner access after that work, immediately before QEMU.
+          sudo chmod 0666 /dev/kvm
+          python3 -c 'import os; fd = os.open("/dev/kvm", os.O_RDWR); os.close(fd)'
+          args=(--iso zfs-live-build/install-user.iso --output zfs-live-build/unraid-vm.qcow2)
+          if [[ "$FORCE_BUILD" == "true" ]]; then
+            args+=(--force)
+          fi
+          python3 scripts/build-vm-image.py "${args[@]}"
+          if [[ "$PUBLISH_ENABLED" == "1" ]]; then
+            cp zfs-live-build/unraid-vm.qcow2 zfs-live-build/unraid-vm.qcow2.json \
+              zfs-live-build/unraid-vm.qcow2.sha256 "$PUBLISH_DIR/"
+          fi
+
       - name: Validate user ISO and IMG outputs
         shell: bash
         run: |
@@ -236,6 +261,9 @@ jobs:
           required_outputs=(
             zfs-live-build/install-user.iso
             zfs-live-build/install-user.img
+            zfs-live-build/unraid-vm.qcow2
+            zfs-live-build/unraid-vm.qcow2.json
+            zfs-live-build/unraid-vm.qcow2.sha256
           )
 
           for output in "${required_outputs[@]}"; do
@@ -249,7 +277,7 @@ jobs:
           set -euo pipefail
           mkdir -p artifacts
           if [[ -d zfs-live-build ]]; then
-            find zfs-live-build -maxdepth 1 -type f \( -name "install-*.iso" -o -name "install-*.img" \) -exec cp -v {} artifacts/ \;
+            find zfs-live-build -maxdepth 1 -type f \( -name "install-*.iso" -o -name "install-*.img" -o -name "unraid-vm.qcow2*" \) -exec cp -v {} artifacts/ \;
           fi
 
       - name: Smoke check artifacts and generate checksums
@@ -259,7 +287,7 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
 
-          artifacts_to_check=(artifacts/install-*.iso artifacts/install-*.img)
+          artifacts_to_check=(artifacts/install-*.iso artifacts/install-*.img artifacts/unraid-vm.qcow2)
           [[ ${#artifacts_to_check[@]} -gt 0 ]] || {
             echo "No install artifacts found for smoke checks" >&2
             exit 1
@@ -272,6 +300,10 @@ jobs:
 
             mime_type="$(file --brief --mime-type "$artifact")"
             case "$artifact" in
+              *.qcow2)
+                qemu-img check -f qcow2 "$artifact"
+                min_size_bytes=67108864
+                ;;
               *.iso)
                 [[ "$mime_type" == "application/x-iso9660-image" || "$mime_type" == "application/octet-stream" ]] || {
                   echo "Unexpected ISO mime type for $artifact: $mime_type" >&2
@@ -329,7 +361,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          find zfs-live-build -maxdepth 1 -type f \( -name 'install-*.iso' -o -name 'install-*.img' \) -delete
+          find zfs-live-build -maxdepth 1 -type f \( -name 'install-*.iso' -o -name 'install-*.img' -o -name 'unraid-vm.qcow2*' \) -delete
           if [[ -d zfs-live-build/rootfs ]]; then
             sudo rm -rf zfs-live-build/rootfs
           fi
@@ -394,6 +426,28 @@ jobs:
           path: artifacts/install-user-minimal.img
           if-no-files-found: warn
 
+      - name: Upload preinstalled Unraid VM image
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: unraid-vm-qcow2-${{ github.run_number }}
+          retention-days: ${{ env.ARTIFACT_RETENTION_DAYS }}
+          compression-level: 0
+          path: |
+            artifacts/unraid-vm.qcow2
+            artifacts/unraid-vm.qcow2.json
+            artifacts/unraid-vm.qcow2.sha256
+          if-no-files-found: warn
+
+      - name: Upload VM build log
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: unraid-vm-build-log-${{ github.run_number }}
+          retention-days: ${{ env.ARTIFACT_RETENTION_DAYS }}
+          path: artifacts/unraid-vm.qcow2.build.log
+          if-no-files-found: ignore
+
       - name: Upload user checksums
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -426,7 +480,7 @@ jobs:
     needs: build-images
     if: ${{ needs.build-images.result == 'success' && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -439,6 +493,10 @@ jobs:
             action: ci-menu
             state_dir: unraid-installer-menu-e2e
             artifact: iso-installer-menu-kvm-e2e
+          - name: Preinstalled VM Image KVM E2E
+            action: ci-vm-image
+            state_dir: unraid-vm-image-e2e
+            artifact: vm-image-kvm-e2e
           - name: eMMC Identity KVM E2E
             action: ci-emmc
             state_dir: unraid-installer-emmc-e2e
@@ -454,9 +512,17 @@ jobs:
           fetch-depth: 1
 
       - name: Download installer ISO
+        if: ${{ matrix.action != 'ci-vm-image' }}
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: install-user-iso-${{ github.run_number }}
+          path: artifacts/e2e
+
+      - name: Download built VM image
+        if: ${{ matrix.action == 'ci-vm-image' }}
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: unraid-vm-qcow2-${{ github.run_number }}
           path: artifacts/e2e
 
       - name: Install KVM test dependencies
@@ -474,6 +540,7 @@ jobs:
             ovmf \
             parted \
             python3 \
+            tesseract-ocr \
             qemu-system-x86 \
             qemu-utils \
             xorriso \
@@ -492,7 +559,7 @@ jobs:
           qemu-system-x86_64 --version
 
       - name: Download pinned Unraid OS payload
-        if: ${{ matrix.action != 'ci-emmc' }}
+        if: ${{ matrix.action != 'ci-emmc' && matrix.action != 'ci-vm-image' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -508,6 +575,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          if [[ "${{ matrix.action }}" == "ci-vm-image" ]]; then
+            tests/linux-rescue-kvm-e2e.sh ci-vm-image \
+              --vm-image artifacts/e2e/unraid-vm.qcow2 \
+              --state-dir "$RUNNER_TEMP/${{ matrix.state_dir }}" --ram 8192 --cpus 2
+            exit 0
+          fi
           iso="$(find artifacts/e2e -maxdepth 1 -type f -name 'install-user.iso' -print -quit)"
           [[ -n "$iso" ]]
           args=(
@@ -541,4 +614,9 @@ jobs:
             ${{ runner.temp }}/${{ matrix.state_dir }}/serial.log
             ${{ runner.temp }}/${{ matrix.state_dir }}/disk-identities.tsv
             ${{ runner.temp }}/${{ matrix.state_dir }}/installer-command.txt
+            ${{ runner.temp }}/${{ matrix.state_dir }}/*-serial.log
+            ${{ runner.temp }}/${{ matrix.state_dir }}/*-qemu.log
+            ${{ runner.temp }}/${{ matrix.state_dir }}/*.ppm
+            ${{ runner.temp }}/${{ matrix.state_dir }}/*-console.txt
+            ${{ runner.temp }}/${{ matrix.state_dir }}/*result.json
           if-no-files-found: warn

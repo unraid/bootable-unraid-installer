@@ -40,6 +40,8 @@ sudo apt install -y \
  debootstrap \
  squashfs-tools \
  xorriso \
+ qemu-system-x86 \
+ qemu-utils \
  grub-pc-bin \
  grub-efi-amd64-bin \
  mtools \

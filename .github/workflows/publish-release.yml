@@ -114,6 +114,15 @@ jobs:
           merge-multiple: true
           path: release-assets
 
+      - name: Download exact-release VM image
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.source_run_id }}
+          pattern: unraid-vm-qcow2-*
+          merge-multiple: true
+          path: release-assets
+
       - name: Download exact-release Rescue launcher
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -130,6 +139,9 @@ jobs:
           for file in \
             release-assets/install-user.iso \
             release-assets/install-user-minimal.img \
+            release-assets/unraid-vm.qcow2 \
+            release-assets/unraid-vm.qcow2.json \
+            release-assets/unraid-vm.qcow2.sha256 \
             release-assets/linux-rescue-vm.sh; do
             [[ -s "$file" ]] || { echo "Missing required file: $file" >&2; exit 1; }
           done
@@ -153,6 +165,26 @@ jobs:
           grep -qx "PUBLISHED_RELEASE_TAG=\"${RELEASE_TAG}\"" "release-assets/${launcher_asset}"
           chmod 0755 "release-assets/${launcher_asset}"
 
+          python3 - "$RELEASE_VERSION" <<'PYTHON'
+          import hashlib
+          import json
+          from pathlib import Path
+          import sys
+          root = Path("release-assets")
+          source = root / "unraid-vm.qcow2"
+          name = "unraid-vm-" + sys.argv[1] + ".qcow2"
+          manifest = json.loads((root / "unraid-vm.qcow2.json").read_text())
+          with source.open("rb") as handle:
+              digest = hashlib.file_digest(handle, "sha256").hexdigest()
+          assert digest == manifest["sha256"] == (root / "unraid-vm.qcow2.sha256").read_text().strip()
+          manifest["filename"] = name
+          manifest["qaVmBootMedia"]["sourceRef"] = name
+          (root / (name + ".json")).write_text(json.dumps(manifest, indent=2) + "\n")
+          source.rename(root / name)
+          (root / "unraid-vm.qcow2.json").unlink()
+          (root / "unraid-vm.qcow2.sha256").unlink()
+          PYTHON
+
           zip -9 -j "release-assets/${img_asset}" release-assets/install-user-minimal.img
           rm -f release-assets/install-user-minimal.img
 
@@ -164,6 +196,8 @@ jobs:
           for asset in \
             release-assets/unraid-installer-*.iso \
             release-assets/unraid-installer-*.img.zip \
+            release-assets/unraid-vm-*.qcow2 \
+            release-assets/unraid-vm-*.qcow2.json \
             release-assets/unraid-installer-linux-rescue.sh; do
             md5sum "$asset" | awk '{print $1}' > "${asset}.md5"
             sha256sum "$asset" | awk '{print $1}' > "${asset}.sha256"
@@ -184,6 +218,7 @@ jobs:
             release-assets/unraid-installer-linux-rescue.sh \
             release-assets/unraid-installer-linux-rescue.sh.md5 \
             release-assets/unraid-installer-*.sha256 \
+            release-assets/unraid-vm-*.qcow2* \
             --clobber
 
       - name: Verify anonymous release downloads
