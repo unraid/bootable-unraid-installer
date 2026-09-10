@@ -1,5 +1,18 @@
 # Changelog
 
+## [7.3.2-sp.2](https://github.com/unraid/bootable-unraid-installer/compare/Installer-7.3.2-sp.1...Installer-7.3.2-sp.2) (2026-09-10)
+
+
+### Features
+
+* **images:** publish preinstalled Unraid VM images ([#46](https://github.com/unraid/bootable-unraid-installer/issues/46)) ([fa9326e](https://github.com/unraid/bootable-unraid-installer/commit/fa9326e2b706b723e5af799774a961d8b683efbd))
+
+
+### Bug Fixes
+
+* **ci:** accept exact source in manual releases ([#45](https://github.com/unraid/bootable-unraid-installer/issues/45)) ([24cb7e0](https://github.com/unraid/bootable-unraid-installer/commit/24cb7e09e565743ec25b765c85e666a597ef33e0))
+* **ci:** resolve source runs without checkout ([#42](https://github.com/unraid/bootable-unraid-installer/issues/42)) ([ffa2d3e](https://github.com/unraid/bootable-unraid-installer/commit/ffa2d3e29ff9d8ed08c9bd2071141a6b9e728077))
+
 ## [7.3.2-sp.1](https://github.com/unraid/bootable-unraid-installer/compare/Installer-7.3.2...Installer-7.3.2-sp.1) (2026-08-29)
 
 
