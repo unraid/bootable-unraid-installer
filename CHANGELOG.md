@@ -1,5 +1,13 @@
 # Changelog
 
+## [7.3.2](https://github.com/unraid/bootable-unraid-installer/compare/Installer-7.3.2-sp.2...Installer-7.3.2) (2026-09-29)
+
+
+### Bug Fixes
+
+* **deps:** update bundled Unraid OS to 7.3.2 ([866b475](https://github.com/unraid/bootable-unraid-installer/commit/866b4753c1dde13141a25ba0fded90981b71f6fb))
+* **deps:** update bundled Unraid OS to 7.3.2 ([8c9ab14](https://github.com/unraid/bootable-unraid-installer/commit/8c9ab141b7763a8293285b399d23e4a723921365))
+
 ## [7.3.2-sp.2](https://github.com/unraid/bootable-unraid-installer/compare/Installer-7.3.2-sp.1...Installer-7.3.2-sp.2) (2026-09-10)
 
 
