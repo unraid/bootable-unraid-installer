@@ -12,9 +12,9 @@
   "website": "https://docs.unraid.net/unraid-os/release-notes/7.3.2/",
   "url": "https://releases.unraid.net/dl/stable/7.3.2/cce9ffc6d2278430ab0029c5b4d66135fa2e9dd2728fc3365cdffa485ebcd713/unRAIDServer-7.3.2-x86_64.zip?utm_source=usb_creator&utm_medium=app",
   "filename": "unRAIDServer-7.3.2-x86_64.zip",
-  "sha256": "9ecf63726f69b8b11706e87bbcbfbea8ac8863bfed0867a1f9dcc272dee21420",
+  "sha256": "960c327af2b62bf3f98a42747a6d7282474ebbeb7e65b9707f6eae2de42a53c9",
   "url_sha256": "cce9ffc6d2278430ab0029c5b4d66135fa2e9dd2728fc3365cdffa485ebcd713",
   "image_download_size": 1188539035,
   "extract_size": 1188531069,
-  "updated_at": "2026-07-09T01:02:23+00:00"
+  "updated_at": "2026-09-29T06:50:02+00:00"
 }
