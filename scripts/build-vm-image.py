@@ -33,6 +33,12 @@ finish() {
     else
         echo "UNRAID_VM_BUILD_RESULT=failure exit=$result"
     fi
+    # Applying saved settings uses TCSADRAIN: transmit the marker before
+    # sysrq prints directly to the same console, bypassing the tty queue.
+    if ! stty -F /dev/ttyS0 "$(stty -F /dev/ttyS0 -g)"; then
+        echo 'Unable to drain the build result serial output' >&2
+        return 1
+    fi
     echo o > /proc/sysrq-trigger
     while true; do sleep 1; done
 }
