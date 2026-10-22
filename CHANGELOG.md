@@ -1,5 +1,16 @@
 # Changelog
 
+## [7.3.3](https://github.com/unraid/bootable-unraid-installer/compare/Installer-7.3.2-sp.2...Installer-7.3.3) (2026-10-22)
+
+
+### Bug Fixes
+
+* **deps:** update bundled Unraid OS to 7.3.2 ([866b475](https://github.com/unraid/bootable-unraid-installer/commit/866b4753c1dde13141a25ba0fded90981b71f6fb))
+* **deps:** update bundled Unraid OS to 7.3.2 ([8c9ab14](https://github.com/unraid/bootable-unraid-installer/commit/8c9ab141b7763a8293285b399d23e4a723921365))
+* **deps:** update bundled Unraid OS to 7.3.3 ([5b5bd8e](https://github.com/unraid/bootable-unraid-installer/commit/5b5bd8ef303c8a0fa32a78c2653e1cddb3920281))
+* **deps:** update bundled Unraid OS to 7.3.4 ([#54](https://github.com/unraid/bootable-unraid-installer/issues/54)) ([bb562f2](https://github.com/unraid/bootable-unraid-installer/commit/bb562f2e25056ef6ac22d6306147867571266690))
+* **installer:** include Hyper-V guest drivers ([#52](https://github.com/unraid/bootable-unraid-installer/issues/52)) ([7ff9cea](https://github.com/unraid/bootable-unraid-installer/commit/7ff9cea00848d1d3cdcf3c9a9e40ccc9647a8462))
+
 ## [7.3.2-sp.2](https://github.com/unraid/bootable-unraid-installer/compare/Installer-7.3.2-sp.1...Installer-7.3.2-sp.2) (2026-09-10)
 
 
