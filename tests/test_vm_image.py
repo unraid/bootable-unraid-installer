@@ -62,6 +62,54 @@ class VMImageTests(unittest.TestCase):
     def test_guest_script_syntax(self):
         subprocess.run(["bash", "-n"], input=vm.GUEST_MENU, text=True, check=True)
 
+    def test_guest_result_is_transmitted_before_shutdown(self):
+        # Model the UART queue separately from printk's direct console output.
+        handler = vm.GUEST_MENU.split("finish() {", 1)[1].split("trap finish EXIT", 1)[0]
+        handler = "finish() {" + handler
+        handler = handler.replace("echo o > /proc/sysrq-trigger", "shutdown")
+        handler = handler.replace("while true; do sleep 1; done", "return")
+        harness = r'''
+pending=""
+sync() { :; }
+echo() {
+    case "$1" in
+        UNRAID_VM_BUILD_RESULT=*) pending="$*" ;;
+        *) builtin echo "$@" ;;
+    esac
+}
+stty() {
+    [[ "$1" == -F && "$2" == /dev/ttyS0 ]] || return 1
+    if [[ "$3" == -g ]]; then
+        printf 'saved-settings\n'
+    else
+        [[ "$drain_failure" == 0 ]] || return 1
+        [[ "$3" == saved-settings ]] || return 1
+        printf '\n%s\n' "$pending"
+        pending=""
+    fi
+}
+shutdown() {
+    if [[ -n "$pending" ]]; then
+        printf '\nUNRAID_VM_BUILD_sysrq: Power Off\n%s\n' "${pending#UNRAID_VM_BUILD_}"
+    else
+        printf 'sysrq: Power Off\n'
+    fi
+}
+'''
+        for status, drain_failure in ((0, 0), (1, 0), (0, 1), (1, 1)):
+            with self.subTest(status=status, drain_failure=drain_failure):
+                script = harness + handler + f"\ndrain_failure={drain_failure}\n(exit {status}); finish\n"
+                result = subprocess.run(["bash"], input=script, capture_output=True, text=True)
+                if drain_failure:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertNotIn("sysrq: Power Off", result.stdout)
+                    self.assertIn("Unable to drain", result.stderr)
+                    continue
+                self.assertEqual(result.returncode, 0, result.stderr)
+                marker = "UNRAID_VM_BUILD_RESULT=" + ("success" if status == 0 else "failure exit=1")
+                self.assertIn("\n" + marker + "\n", result.stdout)
+                self.assertLess(result.stdout.index(marker), result.stdout.index("sysrq: Power Off"))
+
     @unittest.skipUnless(shutil.which("qemu-img"), "qemu-img is required")
     def test_compressed_image_round_trip_and_smallest_selection(self):
         raw = self.root / "boot.raw"
