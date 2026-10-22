@@ -41,3 +41,6 @@ jobs:
           printf 'Checking %s shell script(s):\n' "${#scripts[@]}"
           printf ' - %s\n' "${scripts[@]}"
           shellcheck "${scripts[@]}"
+
+      - name: Test mirrored EFI runtime preflight
+        run: python3 -m unittest discover -s tests -p test_mirror_runtime.py -v

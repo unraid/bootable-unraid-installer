@@ -606,6 +606,7 @@ deb ${UBUNTU_SECURITY_MIRROR} ${UBUNTU_CODENAME}-security main restricted univer
 EOF
 
 sudo chroot "$ROOTFS" /bin/bash <<'EOF'
+set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 apt update
 apt install -y --no-install-recommends \
@@ -2352,6 +2353,13 @@ EOF
 sudo chmod +x "$ROOTFS/init"
 
 sudo touch "$ROOTFS/etc/machine-id"
+
+# Check the target runtime, including reused rootfs builds, before packaging.
+# A host-side mcopy does not prove that the installer can run its own copy.
+if ! sudo chroot "$ROOTFS" /usr/bin/mcopy -V >/dev/null 2>&1; then
+ echo "Installer rootfs cannot run mcopy; rebuild in full mode with mtools installed." >&2
+ exit 1
+fi
 
 echo "Packing initrd (this can take a while)..."
 (

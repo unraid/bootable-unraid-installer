@@ -774,6 +774,13 @@ resolve_selected_disk_ids() {
     fi
 }
 
+ensure_mirrored_efi_runtime() {
+    if ! command -v mcopy >/dev/null 2>&1 || ! mcopy -V >/dev/null 2>&1; then
+        error_msg "ERROR: mirrored internal boot requires a working mcopy command from mtools. Boot the latest installer ISO or reflash the USB image. Updating partner scripts or downloading another Unraid ZIP does not update the installer system tools."
+        return 1
+    fi
+}
+
 sync_mirrored_efi_core() {
     local first_esp="$1"
     local second_esp="$2"
@@ -782,10 +789,7 @@ sync_mirrored_efi_core() {
     local second_core=""
     local reread_core=""
 
-    command -v mcopy >/dev/null 2>&1 || {
-        error_msg "ERROR: mcopy is required to verify mirrored EFI loaders."
-        return 1
-    }
+    ensure_mirrored_efi_runtime || return 1
 
     if findmnt -rn -S "$first_esp" >/dev/null 2>&1 || findmnt -rn -S "$second_esp" >/dev/null 2>&1; then
         error_msg "ERROR: EFI partitions must be unmounted before mirrored loader verification."
@@ -1170,6 +1174,11 @@ if (( BOOT_DEVICE_COUNT == 2 )) && [[ "$ROOT_SRC" == *"$TARGET_DISK_2"* ]]; then
     error_msg "ERROR: You are running from $TARGET_2."
     log_msg "Refusing to overwrite active system disk."
     exit 1
+fi
+
+# Reject incompatible installer media before confirmation or disk changes.
+if (( BOOT_DEVICE_COUNT == 2 )); then
+    ensure_mirrored_efi_runtime || exit 1
 fi
 
 # Resolve and validate persistent identities before the destructive prompt.
