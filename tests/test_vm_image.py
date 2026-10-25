@@ -62,6 +62,40 @@ class VMImageTests(unittest.TestCase):
     def test_guest_script_syntax(self):
         subprocess.run(["bash", "-n"], input=vm.GUEST_MENU, text=True, check=True)
 
+    def test_guest_result_reaches_serial_before_poweroff(self):
+        # Emulate the serial driver's queued writes. Power-off loses anything
+        # still queued, as observed in CI when sysrq split the success marker.
+        finish = vm.GUEST_MENU.split("finish() {", 1)[1].split("\ntrap finish EXIT", 1)[0]
+        finish = "finish() {" + finish
+        finish = finish.replace("/proc/sysrq-trigger", str(self.root / "sysrq"))
+        finish = finish.replace("while true; do sleep 1; done", "return")
+        for status in (0, 7):
+            with self.subTest(status=status):
+                code = r'''
+set -euo pipefail
+pending=""
+exec 3>&1
+sync() { :; }
+echo() {
+    if [[ "$*" == o ]]; then
+        # Kernel shutdown output bypasses the pending tty queue.
+        printf 'sysrq: Power Off\n' >&3
+    else
+        pending+="$*"$'\n'
+    fi
+}
+stty() {
+    [[ "$*" == "-F /dev/ttyS0 drain -echo" ]] || return 1
+    printf '%s' "$pending"
+    pending=""
+}
+''' + finish + f"\nset +e\n(exit {status})\nfinish\n"
+                result = subprocess.run(["bash", "-c", code], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                marker = ("UNRAID_VM_BUILD_RESULT=success" if status == 0
+                          else f"UNRAID_VM_BUILD_RESULT=failure exit={status}")
+                self.assertEqual(result.stdout, marker + "\nsysrq: Power Off\n")
+
     @unittest.skipUnless(shutil.which("qemu-img"), "qemu-img is required")
     def test_compressed_image_round_trip_and_smallest_selection(self):
         raw = self.root / "boot.raw"

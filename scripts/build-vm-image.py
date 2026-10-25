@@ -33,6 +33,9 @@ finish() {
     else
         echo "UNRAID_VM_BUILD_RESULT=failure exit=$result"
     fi
+    # Drain the tty queue before sysrq writes directly to the serial console.
+    # Otherwise shutdown messages can split the result marker still in flight.
+    stty -F /dev/ttyS0 drain -echo
     echo o > /proc/sysrq-trigger
     while true; do sleep 1; done
 }
