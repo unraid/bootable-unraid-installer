@@ -556,29 +556,42 @@ prompt_default() {
 
 is_valid_pool_name() {
     local pool_name="$1"
+    local LC_ALL=C
 
-    [[ -n "$pool_name" ]] || return 1
-    [[ "$pool_name" == "${pool_name,,}" ]] || return 1
-    [[ "$pool_name" =~ ^[a-z][a-z0-9_-]*$ ]]
+    # Match WebGUI pool creation (CacheDevices.page), including its input limit.
+    if (( ${#pool_name} == 0 || ${#pool_name} > 40 )) ||
+       [[ ! "$pool_name" =~ ^[a-z]([a-z0-9~._-]*[a-z_-])*$ ]]; then
+        printf '%s\n' "Use 1-40 characters: start with a lowercase letter; end with a lowercase letter, '_' or '-'. Inside, use lowercase letters, digits, '~', '.', '_' or '-'."
+        return 1
+    fi
+    # 'boot' is reserved for data pools, but is the internal installer's default.
+    case "$pool_name" in
+        flash|user|user0|dev|remotes|recyclebin|rootshare|disks|addons|homes|global|printers|log|disk|parity|diskp|diskq|diskr|mirror*|raidz*|draid*|spare*)
+            printf '%s\n' "This pool name is reserved. Choose another name."
+            return 1
+            ;;
+    esac
+    return 0
 }
 
 prompt_boot_pool_name() {
-    local entered
+    local entered validation_error
 
     while true; do
-        entered="$(ui_prompt "Boot Pool Name" "Enter pool name (lowercase letters/numbers, '-' or '_')" "$BOOT_POOL_NAME")"
-        entered="${entered//[[:space:]]/}"
+        entered="$(ui_prompt "Boot Pool Name" "Enter pool name (1-40 characters; lowercase, no leading/trailing digits)" "$BOOT_POOL_NAME")"
+        entered="${entered#"${entered%%[![:space:]]*}"}"
+        entered="${entered%"${entered##*[![:space:]]}"}"
         [[ -n "$entered" ]] || entered="$BOOT_POOL_NAME"
 
-        if is_valid_pool_name "$entered"; then
+        if validation_error="$(is_valid_pool_name "$entered")"; then
             BOOT_POOL_NAME="$entered"
             return 0
         fi
 
         if [[ "$ui_backend" != "text" ]]; then
-            ui_msg "Invalid Pool Name" "Pool name must be lowercase and start with a letter."
+            ui_msg "Invalid Pool Name" "$validation_error"
         else
-            echo "Invalid pool name. Use lowercase and start with a letter."
+            printf 'Invalid pool name. %s\n' "$validation_error"
         fi
     done
 }
