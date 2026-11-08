@@ -12,9 +12,9 @@
   "website": "https://docs.unraid.net/unraid-os/release-notes/7.3.4/",
   "url": "https://releases.unraid.net/dl/stable/7.3.4/ae8169459e2277e8d450b9a590c18f747dd8eaa50ebc54743a36cadd093cbfb8/unRAIDServer-7.3.4-x86_64.zip?utm_source=usb_creator&utm_medium=app",
   "filename": "unRAIDServer-7.3.4-x86_64.zip",
-  "sha256": "ba608638e743b323f4581e911fd07093158344010dab14bb19607b46999530e9",
+  "sha256": "1cfba7529c8f7f59c884a8737121242ad3844eaa0935d307ec71cdc7bc809ad3",
   "url_sha256": "ae8169459e2277e8d450b9a590c18f747dd8eaa50ebc54743a36cadd093cbfb8",
   "image_download_size": 1233423637,
   "extract_size": 1233415671,
-  "updated_at": "2026-10-22T18:36:59+00:00"
+  "updated_at": "2026-11-08T18:24:45+00:00"
 }
