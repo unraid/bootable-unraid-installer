@@ -382,7 +382,12 @@ assert_disk_idle() {
         fi
     done
 
-    if command -v zpool >/dev/null 2>&1; then
+    # Imported pools need the zfs kernel module, so skip the check when it is
+    # not loaded. Some rescue systems ship a "zpool" that is really an
+    # interactive OpenZFS installer; running it would wait for a keypress.
+    # stdin comes from /dev/null so zpool can never consume the caller's input,
+    # such as the disk list read by choose_disks_interactively.
+    if [[ -d /sys/module/zfs ]] && command -v zpool >/dev/null 2>&1; then
         while read -r pool_device; do
             [[ "$pool_device" == /dev/* ]] || continue
             pool_device="$(readlink -f "$pool_device")"
@@ -392,7 +397,7 @@ assert_disk_idle() {
                     return 1
                 fi
             done
-        done < <(zpool status -P 2>/dev/null | awk '{for (i = 1; i <= NF; i++) if ($i ~ /^\/dev\//) print $i}')
+        done < <(zpool status -P </dev/null 2>/dev/null | awk '{for (i = 1; i <= NF; i++) if ($i ~ /^\/dev\//) print $i}')
     fi
 }
 
