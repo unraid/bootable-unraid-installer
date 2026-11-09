@@ -150,8 +150,10 @@ environments where a permanent internal boot device is preferred.
    device set.
 5. Select the boot pool size. Use **Dedicated** to use the disk as a dedicated
    boot device, or select a fixed or custom size.
-6. Enter a boot pool name. The name must start with a lowercase letter and can
-   contain lowercase letters, numbers, `-`, and `_`.
+6. Enter a boot pool name with 1–40 characters. Start with a lowercase letter
+   and end with a lowercase letter, `_`, or `-`. Between them, use lowercase
+   letters, digits, `~`, `.`, `_`, or `-`. Reserved names and prefixes are
+   rejected. The installer permits its default name, `boot`.
 7. Verify the selected disk or disks and confirm the destructive action.
 8. Wait while the installer creates the partition layout, copies the Unraid
    files, validates the SHA256 files, and writes the boot configuration.

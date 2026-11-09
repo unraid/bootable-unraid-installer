@@ -44,3 +44,6 @@ jobs:
 
       - name: Test mirrored EFI runtime preflight
         run: python3 -m unittest discover -s tests -p test_mirror_runtime.py -v
+
+      - name: Test internal boot pool-name validation
+        run: python3 -m unittest discover -s tests -p test_pool_name.py -v
