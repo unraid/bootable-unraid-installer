@@ -1,5 +1,15 @@
 # Changelog
 
+## [7.4.0](https://github.com/unraid/bootable-unraid-installer/compare/Installer-7.3.4...Installer-7.4.0) (2026-11-13)
+
+
+### Bug Fixes
+
+* **deps:** update bundled Unraid OS to 7.4.0 ([2b8f9a4](https://github.com/unraid/bootable-unraid-installer/commit/2b8f9a48a1db27bf74ad73cb0783696f501db473))
+* **installer:** validate internal boot pool names like WebGUI ([#57](https://github.com/unraid/bootable-unraid-installer/issues/57)) ([f8db6d9](https://github.com/unraid/bootable-unraid-installer/commit/f8db6d936317332f4cc2889b0ec16b4ed2dfa59b))
+* **recovery:** stop valid boot backups being rejected ([#61](https://github.com/unraid/bootable-unraid-installer/issues/61)) ([0a862d6](https://github.com/unraid/bootable-unraid-installer/commit/0a862d6b6086c23c15d2ad315a869c483a050728))
+* **rescue:** stop zpool helpers from consuming the disk list ([#59](https://github.com/unraid/bootable-unraid-installer/issues/59)) ([4441fbc](https://github.com/unraid/bootable-unraid-installer/commit/4441fbc07e4dee617d587c0dd9f33836aaf0c910))
+
 ## [7.3.4](https://github.com/unraid/bootable-unraid-installer/compare/Installer-7.3.2-sp.2...Installer-7.3.4) (2026-10-26)
 
 
