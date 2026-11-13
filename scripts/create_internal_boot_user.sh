@@ -978,11 +978,21 @@ if [[ -n "$RESTORE_BACKUP" ]]; then
         error_msg "ERROR: restore backup does not exist: $ZIP_FILE"
         exit 1
     fi
-    if ! unzip -Z1 "$ZIP_FILE" | grep -qx 'config/' || ! unzip -Z1 "$ZIP_FILE" | grep -qx 'bzimage'; then
+    if ! unzip -tqq "$ZIP_FILE" >/dev/null; then
+        error_msg "ERROR: restore backup failed ZIP integrity validation."
+        exit 1
+    fi
+    # Complete the listing before searching it so early grep exits cannot
+    # send SIGPIPE to unzip, and listing failures remain validation errors.
+    if ! archive_listing="$(unzip -Z1 "$ZIP_FILE")"; then
+        error_msg "ERROR: unable to list restore backup contents."
+        exit 1
+    fi
+    if ! grep -qx 'config/' <<< "$archive_listing" || ! grep -qx 'bzimage' <<< "$archive_listing"; then
         error_msg "ERROR: restore backup must contain config/ and bzimage."
         exit 1
     fi
-    if unzip -Z1 "$ZIP_FILE" | grep -Eq '(^/|(^|/)\.\.(/|$))'; then
+    if grep -Eq '(^/|(^|/)\.\.(/|$))' <<< "$archive_listing"; then
         error_msg "ERROR: restore backup contains unsafe paths."
         exit 1
     fi

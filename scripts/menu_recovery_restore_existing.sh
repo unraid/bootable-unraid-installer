@@ -141,10 +141,15 @@ select_backup() {
 }
 
 validate_backup() {
+    local archive_listing
+
     unzip -tqq "$backup_file" >/dev/null || return 1
-    unzip -Z1 "$backup_file" | grep -qx 'config/' || return 1
-    unzip -Z1 "$backup_file" | grep -qx 'bzimage' || return 1
-    ! unzip -Z1 "$backup_file" | grep -Eq '(^/|(^|/)\.\.(/|$))' || return 1
+    # Complete the listing before searching it so early grep exits cannot
+    # send SIGPIPE to unzip, and listing failures remain validation errors.
+    archive_listing="$(unzip -Z1 "$backup_file")" || return 1
+    grep -qx 'config/' <<< "$archive_listing" || return 1
+    grep -qx 'bzimage' <<< "$archive_listing" || return 1
+    ! grep -Eq '(^/|(^|/)\.\.(/|$))' <<< "$archive_listing" || return 1
     ! archive_contains_symlink "$backup_file"
 }
 
