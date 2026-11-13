@@ -47,3 +47,6 @@ jobs:
 
       - name: Test internal boot pool-name validation
         run: python3 -m unittest discover -s tests -p test_pool_name.py -v
+
+      - name: Test restore backup validation
+        run: python3 -m unittest discover -s tests -p test_restore_validation.py -v
