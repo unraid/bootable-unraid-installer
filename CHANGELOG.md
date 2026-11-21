@@ -1,5 +1,12 @@
 # Changelog
 
+## [7.4.1](https://github.com/unraid/bootable-unraid-installer/compare/Installer-7.4.0...Installer-7.4.1) (2026-11-21)
+
+
+### Bug Fixes
+
+* **deps:** update bundled Unraid OS to 7.4.1 ([193aa0a](https://github.com/unraid/bootable-unraid-installer/commit/193aa0a5a9f97731c8beb8f67a2f0e53d90754e8))
+
 ## [7.4.0](https://github.com/unraid/bootable-unraid-installer/compare/Installer-7.3.4...Installer-7.4.0) (2026-11-13)
 
 
