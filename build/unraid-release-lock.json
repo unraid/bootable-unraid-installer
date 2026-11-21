@@ -6,15 +6,15 @@
     "channel": "stable"
   },
   "channel": "stable",
-  "name": "Unraid 7.4.0",
-  "version": "7.4.0",
-  "release_date": "2026-11-09",
-  "website": "https://docs.unraid.net/unraid-os/release-notes/7.4.0/",
-  "url": "https://releases.unraid.net/dl/stable/7.4.0/5d32b11ee717f3bcc946145606b84cea85fc8cf6d0eb63c2b66649984b6817c7/unRAIDServer-7.4.0-x86_64.zip?utm_source=usb_creator&utm_medium=app",
-  "filename": "unRAIDServer-7.4.0-x86_64.zip",
-  "sha256": "c988c579fc68b31406d41473a4ad9e2b95ffbdb758ab0cb691669edc0a396c7c",
-  "url_sha256": "5d32b11ee717f3bcc946145606b84cea85fc8cf6d0eb63c2b66649984b6817c7",
-  "image_download_size": 1234470811,
-  "extract_size": 1234462845,
-  "updated_at": "2026-11-11T00:41:52+00:00"
+  "name": "Unraid 7.4.1",
+  "version": "7.4.1",
+  "release_date": "2026-11-20",
+  "website": "https://docs.unraid.net/unraid-os/release-notes/7.4.1/",
+  "url": "https://releases.unraid.net/dl/stable/7.4.1/1ea5240824ead1fd477d2e8bc120fea74d26e1153baad64f7479610701d9ed7b/unRAIDServer-7.4.1-x86_64.zip?utm_source=usb_creator&utm_medium=app",
+  "filename": "unRAIDServer-7.4.1-x86_64.zip",
+  "sha256": "3372cf69676d28c31e9e92e2d6f9ebfe51b8fdabfe23d965a059a090a516c3b7",
+  "url_sha256": "1ea5240824ead1fd477d2e8bc120fea74d26e1153baad64f7479610701d9ed7b",
+  "image_download_size": 1261159679,
+  "extract_size": 1261151713,
+  "updated_at": "2026-11-21T00:42:03+00:00"
 }
